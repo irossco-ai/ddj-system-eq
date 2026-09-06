@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.5.0"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -109,9 +109,10 @@ DEFAULT_CONFIG = {
     "max_filter_step_per_tick": 0.12,
     # Fraction of knob travel either side of the centre detent that is 0 dB.
     "center_deadband": 0.02,
-    # "Headphone mode": shifts the LOW band's corner frequency from the mode's
-    # default (isolator 200 Hz / eq 120 Hz) in 5 Hz steps, -15..+15.
-    "low_fc_offset_hz": 0,
+    # Bass boost: a low shelf below bass_boost_hz, +bass_boost_db (0 = off).
+    # Auto-compensated: the preamp drops by the same amount so it cannot clip.
+    "bass_boost_db": 0,
+    "bass_boost_hz": 80,
     # Which response the knobs have. Switchable from the tray - the two modes
     # mirror the DJM-A9's [EQ CURVE] switch (EQ / ISOLATOR).
     "eq_mode": "isolator",
@@ -409,6 +410,9 @@ class ApoWriter:
         preamp = gains.get(FADER, 0.0)
         if m.get("auto_preamp"):
             preamp -= max(0.0, max(gains[b] for b in BANDS))
+        boost_db = float(self.cfg.get("bass_boost_db", 0) or 0)
+        boost_hz = float(self.cfg.get("bass_boost_hz", 80) or 80)
+        preamp -= max(0.0, boost_db)  # auto-compensation: headroom for the boost
         if preamp == 0:
             preamp = 0.0  # avoid "-0.0"
         lines = [
@@ -420,13 +424,12 @@ class ApoWriter:
             ftype = spec["type"]
             stages = max(1, int(spec.get("stages", 1)))
             per_stage = gains[b] / stages + 0.0
-            fc = float(spec["fc"])
-            if b == "low":
-                fc = max(20.0, fc + float(self.cfg.get("low_fc_offset_hz", 0)))
-            line = f"Filter: ON {ftype} Fc {fc:g} Hz Gain {per_stage:.1f} dB"
+            line = f"Filter: ON {ftype} Fc {spec['fc']} Hz Gain {per_stage:.1f} dB"
             if ftype in ("PK", "LSC", "HSC", "LPQ", "HPQ"):
                 line += f" Q {float(spec.get('q', 0.7)):.2f}"
             lines.extend([line] * stages)
+        if boost_db > 0:
+            lines.append(f"Filter: ON LS Fc {boost_hz:g} Hz Gain {boost_db:.1f} dB")
         lines.extend(self.filter_lines(gains.get(FILTER, 0.0)))
         return "\n".join(lines) + "\n"
 
@@ -676,14 +679,21 @@ class Bridge:
         log.info("Filter resonance -> Q %.2f", q)
         self._notify()
 
-    def set_low_offset(self, hz: int) -> None:
-        """Headphone mode: shift the LOW band's corner by hz (5 Hz steps)."""
-        if int(hz) == int(self.cfg.get("low_fc_offset_hz", 0)):
+    def set_bass_boost(self, db: float | None = None, hz: float | None = None) -> None:
+        """Bass boost shelf: amount (0 = off) and/or corner frequency."""
+        changed = False
+        if db is not None and float(db) != float(self.cfg.get("bass_boost_db", 0)):
+            self.cfg["bass_boost_db"] = float(db)
+            changed = True
+        if hz is not None and float(hz) != float(self.cfg.get("bass_boost_hz", 80)):
+            self.cfg["bass_boost_hz"] = float(hz)
+            changed = True
+        if not changed:
             return
-        self.cfg["low_fc_offset_hz"] = int(hz)
         save_config(self.cfg, self.config_path)
         self.apo.force_rewrite()
-        log.info("LOW crossover offset -> %+d Hz", hz)
+        log.info("Bass boost -> %+g dB below %g Hz (auto-compensated)",
+                 self.cfg["bass_boost_db"], self.cfg["bass_boost_hz"])
         self._notify()
 
     def set_fader_curve(self, curve: str) -> None:
@@ -937,13 +947,20 @@ def run_tray(bridge: Bridge) -> None:
                 checked=chk(lambda k: bridge.cfg.get("fader_curve", "linear") == k, key),
                 radio=True)
 
-    def headphone_items():
-        for hz in (-15, -10, -5, 0, 5, 10, 15):
-            label = "Normal" if hz == 0 else f"{hz:+d} Hz"
+    def bass_boost_items():
+        for db in (0, 3, 6, 9):
             yield pystray.MenuItem(
-                label, act(bridge.set_low_offset, hz),
-                checked=chk(lambda v: int(bridge.cfg.get("low_fc_offset_hz", 0)) == v, hz),
+                "Off" if db == 0 else f"+{db} dB", act(bridge.set_bass_boost, float(db), None),
+                checked=chk(lambda v: float(bridge.cfg.get("bass_boost_db", 0)) == v, float(db)),
                 radio=True)
+        yield pystray.Menu.SEPARATOR
+        for hz in (40, 60, 80, 100):
+            yield pystray.MenuItem(
+                f"below {hz} Hz", act(bridge.set_bass_boost, None, float(hz)),
+                checked=chk(lambda v: float(bridge.cfg.get("bass_boost_hz", 80)) == v, float(hz)),
+                radio=True)
+        yield pystray.Menu.SEPARATOR
+        yield pystray.MenuItem("Auto-compensated: preamp drops by the boost", None, enabled=False)
 
     def learn_items():
         for ctl, label in (("hi", "HI knob"), ("mid", "MID knob"), ("low", "LOW knob"),
@@ -961,7 +978,7 @@ def run_tray(bridge: Bridge) -> None:
         pystray.MenuItem("EQ mode", pystray.Menu(mode_items)),
         pystray.MenuItem("Filter resonance", pystray.Menu(resonance_items)),
         pystray.MenuItem("Fader curve", pystray.Menu(fader_curve_items)),
-        pystray.MenuItem("LPF Frequency Adjustment (Headphone Mode)", pystray.Menu(headphone_items)),
+        pystray.MenuItem("Bass boost (auto-compensated)", pystray.Menu(bass_boost_items)),
         pystray.MenuItem("Bypass EQ",
                          act(lambda: bridge.set_user_bypass(not bridge.user_bypass)),
                          checked=chk(lambda: bridge.user_bypass)),
