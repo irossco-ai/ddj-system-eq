@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -961,7 +961,7 @@ def run_tray(bridge: Bridge) -> None:
         pystray.MenuItem("EQ mode", pystray.Menu(mode_items)),
         pystray.MenuItem("Filter resonance", pystray.Menu(resonance_items)),
         pystray.MenuItem("Fader curve", pystray.Menu(fader_curve_items)),
-        pystray.MenuItem("Headphone mode (LOW crossover)", pystray.Menu(headphone_items)),
+        pystray.MenuItem("LPF Frequency Adjustment (Headphone Mode)", pystray.Menu(headphone_items)),
         pystray.MenuItem("Bypass EQ",
                          act(lambda: bridge.set_user_bypass(not bridge.user_bypass)),
                          checked=chk(lambda: bridge.user_bypass)),
