@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.3.3"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -87,10 +87,10 @@ DEFAULT_CONFIG = {
     "fader_cc": 19,
     # Fader at the bottom mutes; just above it starts at fader_min_db.
     "fader_min_db": -60.0,
-    # Fader curve like the DJM-A9's CH FADER CURVE switch: "gradual" rises
-    # mostly near the top, "even" is a plain audio taper, "fast" rises
-    # sharply near the bottom (for cuts/transforms).
-    "fader_curve": "even",
+    # Fader curve like the DJM-A9's CH FADER CURVE switch: "concave" rises
+    # mostly near the top, "linear" is a plain audio taper, "early_ramp"
+    # rises sharply near the bottom (for cuts/transforms).
+    "fader_curve": "linear",
     # CFX / FILTER knob -> DJ filter: left = low-pass sweeping down, right =
     # high-pass sweeping up, centre = off. On DDJ-200/400/FLX4 the CFX knobs
     # sit on MIDI channel 7, CC 23 (deck 1) / 24 (deck 2): cc = base + strip-1.
@@ -207,6 +207,10 @@ def load_config(path: Path) -> dict:
         user["dj_software_process_names"] = user.pop("rekordbox_process_names")
     if user.get("eq_mode") == "gentle":
         user["eq_mode"] = "eq"
+    # v1.3.2 fader-curve names.
+    renames = {"gradual": "concave", "even": "linear", "fast": "early_ramp"}
+    if user.get("fader_curve") in renames:
+        user["fader_curve"] = renames[user["fader_curve"]]
     return _merge(DEFAULT_CONFIG, user)
 
 
@@ -277,14 +281,14 @@ class ApoWriter:
         frac = (d - dead) / span
         return float(m["boost_db"]) * frac
 
-    FADER_CURVES = {"gradual": 3.0, "even": 1.0, "fast": 1.0 / 3.0}
+    FADER_CURVES = {"concave": 3.0, "linear": 1.0, "early_ramp": 1.0 / 3.0}
 
     def fader_to_db(self, value14: int) -> float:
         """Fader top = 0 dB, curved taper down to fader_min_db, bottom = mute."""
         x = max(0, min(16383, value14)) / 16383.0
         if x < 0.005:
             return -100.0
-        x = x ** self.FADER_CURVES.get(str(self.cfg.get("fader_curve", "even")), 1.0)
+        x = x ** self.FADER_CURVES.get(str(self.cfg.get("fader_curve", "linear")), 1.0)
         return max(float(self.cfg["fader_min_db"]), 20.0 * math.log10(x))
 
     @staticmethod
@@ -909,12 +913,12 @@ def run_tray(bridge: Bridge) -> None:
                 radio=True)
 
     def fader_curve_items():
-        for key, label in (("gradual", "Gradual  (rises near the top)"),
-                           ("even", "Even"),
-                           ("fast", "Fast  (rises near the bottom)")):
+        for key, label in (("concave", "Concave  (rises near the top)"),
+                           ("linear", "Linear"),
+                           ("early_ramp", "Early ramp  (rises near the bottom)")):
             yield pystray.MenuItem(
                 label, act(bridge.set_fader_curve, key),
-                checked=chk(lambda k: bridge.cfg.get("fader_curve", "even") == k, key),
+                checked=chk(lambda k: bridge.cfg.get("fader_curve", "linear") == k, key),
                 radio=True)
 
     def learn_items():
