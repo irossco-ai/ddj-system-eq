@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.3.3"
+APP_VERSION = "1.4.0"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -109,6 +109,9 @@ DEFAULT_CONFIG = {
     "max_filter_step_per_tick": 0.12,
     # Fraction of knob travel either side of the centre detent that is 0 dB.
     "center_deadband": 0.02,
+    # "Headphone mode": shifts the LOW band's corner frequency from the mode's
+    # default (isolator 200 Hz / eq 120 Hz) in 5 Hz steps, -15..+15.
+    "low_fc_offset_hz": 0,
     # Which response the knobs have. Switchable from the tray - the two modes
     # mirror the DJM-A9's [EQ CURVE] switch (EQ / ISOLATOR).
     "eq_mode": "isolator",
@@ -417,7 +420,10 @@ class ApoWriter:
             ftype = spec["type"]
             stages = max(1, int(spec.get("stages", 1)))
             per_stage = gains[b] / stages + 0.0
-            line = f"Filter: ON {ftype} Fc {spec['fc']} Hz Gain {per_stage:.1f} dB"
+            fc = float(spec["fc"])
+            if b == "low":
+                fc = max(20.0, fc + float(self.cfg.get("low_fc_offset_hz", 0)))
+            line = f"Filter: ON {ftype} Fc {fc:g} Hz Gain {per_stage:.1f} dB"
             if ftype in ("PK", "LSC", "HSC", "LPQ", "HPQ"):
                 line += f" Q {float(spec.get('q', 0.7)):.2f}"
             lines.extend([line] * stages)
@@ -668,6 +674,16 @@ class Bridge:
         save_config(self.cfg, self.config_path)
         self.apo.force_rewrite()
         log.info("Filter resonance -> Q %.2f", q)
+        self._notify()
+
+    def set_low_offset(self, hz: int) -> None:
+        """Headphone mode: shift the LOW band's corner by hz (5 Hz steps)."""
+        if int(hz) == int(self.cfg.get("low_fc_offset_hz", 0)):
+            return
+        self.cfg["low_fc_offset_hz"] = int(hz)
+        save_config(self.cfg, self.config_path)
+        self.apo.force_rewrite()
+        log.info("LOW crossover offset -> %+d Hz", hz)
         self._notify()
 
     def set_fader_curve(self, curve: str) -> None:
@@ -921,6 +937,14 @@ def run_tray(bridge: Bridge) -> None:
                 checked=chk(lambda k: bridge.cfg.get("fader_curve", "linear") == k, key),
                 radio=True)
 
+    def headphone_items():
+        for hz in (-15, -10, -5, 0, 5, 10, 15):
+            label = "Normal" if hz == 0 else f"{hz:+d} Hz"
+            yield pystray.MenuItem(
+                label, act(bridge.set_low_offset, hz),
+                checked=chk(lambda v: int(bridge.cfg.get("low_fc_offset_hz", 0)) == v, hz),
+                radio=True)
+
     def learn_items():
         for ctl, label in (("hi", "HI knob"), ("mid", "MID knob"), ("low", "LOW knob"),
                            (FADER, "Fader"), (FILTER, "Filter / CFX knob")):
@@ -937,6 +961,7 @@ def run_tray(bridge: Bridge) -> None:
         pystray.MenuItem("EQ mode", pystray.Menu(mode_items)),
         pystray.MenuItem("Filter resonance", pystray.Menu(resonance_items)),
         pystray.MenuItem("Fader curve", pystray.Menu(fader_curve_items)),
+        pystray.MenuItem("Headphone mode (LOW crossover)", pystray.Menu(headphone_items)),
         pystray.MenuItem("Bypass EQ",
                          act(lambda: bridge.set_user_bypass(not bridge.user_bypass)),
                          checked=chk(lambda: bridge.user_bypass)),

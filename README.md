@@ -121,6 +121,7 @@ Mixer channel   ▸  Channel 1 / Channel 2 ✓ / (3 / 4 on 4-channel decks)
 EQ mode         ▸  ISOLATOR (DJM-A9 curve, −∞..+6 dB) ✓ / EQ (DJM-A9 curve, −26..+6 dB)
 Filter resonance ▸ None (Q 0.7) / Mild (Q 1.0) ✓ / Medium (Q 1.4) / Strong (Q 2.0)
 Fader curve     ▸  Concave (rises near the top) / Linear ✓ / Early ramp (rises near the bottom)
+Headphone mode  ▸  LOW crossover −15 / −10 / −5 / Normal ✓ / +5 / +10 / +15 Hz
 Bypass EQ          (toggle)
 MIDI learn      ▸  HI knob / MID knob / LOW knob / Fader / Filter-CFX knob
 Reset EQ to flat
@@ -144,6 +145,7 @@ Edit `config.json` (UTF-8, restart the bridge after hand edits).
 | `eq_modes.*.bands.*.stages` | 3 (isolator) / 1 (eq) | Cascaded filters per band; 3 × 12 dB/oct = 36 dB/oct |
 | `eq_modes.*.auto_preamp` | off | When on, the preamp drops by the largest boost so flat = bypass loudness (makes boosts feel weak). Keep Windows volume under 100 % when off |
 | `fader_min_db` | −60 | Quietest level just above the fader's bottom stop |
+| `low_fc_offset_hz` | 0 | "Headphone mode": shifts the LOW band's corner from the mode's default (isolator 200 Hz / eq 120 Hz) in 5 Hz steps, −15…+15 |
 | `fader_curve` | `linear` | Like the DJM-A9's CH FADER CURVE switch: `concave` (level arrives near the top), `linear` (audio taper, −6 dB at half), `early_ramp` (near full by a third of the way up — for cuts) |
 | `filter_q` | 1.0 | Filter resonance (tray → *Filter resonance* on units without a PARAMETER knob): 0.707 none, 1.0 mild, 1.4 medium, 2.0 strong — watch headroom |
 | `filter_stages` | 2 | 12 dB/oct per stage; 2 = 24 dB/oct |
