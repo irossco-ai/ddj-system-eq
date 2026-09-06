@@ -4,9 +4,9 @@ Turn a Pioneer / AlphaTheta **DDJ** controller into a system-wide **isolator
 EQ and master fader** for everything Windows plays — YouTube, SoundCloud,
 Spotify, games, anything — without launching rekordbox.
 
-- **HI / MID / LOW** knobs of one mixer channel → 3-band isolator on your
-  output device (deep −60 dB kills, +9 dB boosts, 36 dB/oct), or a gentle
-  hi-fi tone control — switchable from the tray.
+- **HI / MID / LOW** knobs of one mixer channel → 3-band EQ on your output
+  device, with the two curves of a DJM-A9's *EQ CURVE* switch: **ISOLATOR**
+  (−∞…+6 dB, bands drop out) or **EQ** (−26…+6 dB) — switchable from the tray.
 - **Channel fader** → master volume (log taper, mute at the bottom).
 - **Steps aside for DJ software.** The moment rekordbox, Serato, djay,
   VirtualDJ or Traktor starts, the bridge releases the controller and
@@ -114,7 +114,7 @@ are normal (PyInstaller launcher + app).
 ───────────────
 Controller      ▸  DDJ-400  –  DDJ-400 ✓ / …
 Mixer channel   ▸  Channel 1 / Channel 2 ✓ / (3 / 4 on 4-channel decks)
-EQ mode         ▸  Isolator (deep kills, +9 dB) ✓ / Gentle EQ (tone control)
+EQ mode         ▸  ISOLATOR (DJM-A9 curve, −∞..+6 dB) ✓ / EQ (DJM-A9 curve, −26..+6 dB)
 Bypass EQ          (toggle)
 MIDI learn      ▸  HI knob / MID knob / LOW knob / Fader
 Reset EQ to flat
@@ -131,11 +131,12 @@ Edit `config.json` (UTF-8, restart the bridge after hand edits).
 
 | Key | Default | What it does |
 |---|---|---|
-| `eq_mode` | `isolator` | `isolator` or `gentle`; each mode's curve lives under `eq_modes` |
-| `eq_modes.isolator.kill_db` / `boost_db` | −60 / +9 | Knob end-stops. −60 dB = band effectively gone |
-| `eq_modes.*.bands.*.fc` | 250 / 900 / 2500 Hz | Low-shelf corner / mid centre / high-shelf corner |
-| `eq_modes.*.bands.*.stages` | 3 (isolator) | Cascaded filters per band; 3 × 12 dB/oct = 36 dB/oct. 1 = gentle |
-| `eq_modes.*.auto_preamp` | off (isolator) | Preamp drops by the largest boost so flat = bypass loudness; makes boosts feel weak. Keep Windows volume under 100 % when off |
+| `eq_mode` | `isolator` | `isolator` or `eq`; each mode's curve lives under `eq_modes` |
+| `eq_modes.isolator.kill_db` / `boost_db` | −60 / +6 | DJM-A9 ISOLATOR range (−∞ rendered as −60 dB, band effectively gone) |
+| `eq_modes.eq.kill_db` / `boost_db` | −26 / +6 | DJM-A9 EQ range (Pioneer specifies it at 20 kHz / 1 kHz / 20 Hz) |
+| `eq_modes.*.bands.*.fc` | iso 200 / 1000 / 5000 Hz · eq 120 / 1000 / 8000 Hz | Low-shelf corner / mid centre / high-shelf corner. Pioneer doesn't publish corner frequencies; these are chosen to match the specified ranges |
+| `eq_modes.*.bands.*.stages` | 3 (isolator) / 1 (eq) | Cascaded filters per band; 3 × 12 dB/oct = 36 dB/oct |
+| `eq_modes.*.auto_preamp` | off | When on, the preamp drops by the largest boost so flat = bypass loudness (makes boosts feel weak). Keep Windows volume under 100 % when off |
 | `fader_min_db` | −60 | Quietest level just above the fader's bottom stop |
 | `max_db_step_per_tick` / `write_rate_hz` | 12 dB / 40 | Anti-click ramp. Lower the step if you hear clicks on fast sweeps |
 | `dj_software_process_names` | rekordbox, Serato, djay, VirtualDJ, Traktor | Any of these running → bridge yields |

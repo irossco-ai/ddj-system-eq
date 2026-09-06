@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -88,27 +88,28 @@ DEFAULT_CONFIG = {
     "fader_min_db": -60.0,
     # Fraction of knob travel either side of the centre detent that is 0 dB.
     "center_deadband": 0.02,
-    # Which response the knobs have. Switchable from the tray.
+    # Which response the knobs have. Switchable from the tray - the two modes
+    # mirror the DJM-A9's [EQ CURVE] switch (EQ / ISOLATOR).
     "eq_mode": "isolator",
     "eq_modes": {
-        # Each band's gain is split over `stages` cascaded filters: three
-        # 12 dB/oct shelves = 36 dB/oct and a kill that reaches -60 dB, so a
-        # band drops out like a DJ isolator rather than a tone control.
+        # DJM-A9 "ISOLATOR" curve: each band -inf..+6 dB. -inf is rendered as
+        # -60 dB split over three cascaded 12 dB/oct filters (36 dB/oct), so a
+        # band drops out rather than being turned down.
         "isolator": {
-            "kill_db": -60.0, "boost_db": 9.0, "kill_curve": 1.5, "auto_preamp": False,
+            "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
             "bands": {
-                "low": {"type": "LS", "fc": 250, "stages": 3},
-                "mid": {"type": "PK", "fc": 900, "q": 0.5, "stages": 3},
-                "hi": {"type": "HS", "fc": 2500, "stages": 3},
+                "low": {"type": "LS", "fc": 200, "stages": 3},
+                "mid": {"type": "PK", "fc": 1000, "q": 0.5, "stages": 3},
+                "hi": {"type": "HS", "fc": 5000, "stages": 3},
             },
         },
-        # Hi-fi tone control: shallow shelves, modest range, and the preamp
-        # follows the largest boost so flat == bypass loudness.
-        "gentle": {
-            "kill_db": -26.0, "boost_db": 6.0, "kill_curve": 1.0, "auto_preamp": True,
+        # DJM-A9 "EQ" curve: HI/MID/LOW -26..+6 dB (Pioneer specifies the
+        # range at 20 kHz / 1 kHz / 20 Hz); single shelves and a broad mid.
+        "eq": {
+            "kill_db": -26.0, "boost_db": 6.0, "kill_curve": 1.0, "auto_preamp": False,
             "bands": {
                 "low": {"type": "LS", "fc": 120, "stages": 1},
-                "mid": {"type": "PK", "fc": 1000, "q": 0.7, "stages": 1},
+                "mid": {"type": "PK", "fc": 1000, "q": 0.6, "stages": 1},
                 "hi": {"type": "HS", "fc": 8000, "stages": 1},
             },
         },
@@ -180,9 +181,11 @@ def load_config(path: Path) -> dict:
     except Exception as exc:  # noqa: BLE001
         log.error("Config %s unreadable (%s); using defaults", path, exc)
         return dict(DEFAULT_CONFIG)
-    # v1.0 name for the yield list.
+    # v1.0 name for the yield list; v1.2.0 name for the EQ curve.
     if "rekordbox_process_names" in user and "dj_software_process_names" not in user:
         user["dj_software_process_names"] = user.pop("rekordbox_process_names")
+    if user.get("eq_mode") == "gentle":
+        user["eq_mode"] = "eq"
     return _merge(DEFAULT_CONFIG, user)
 
 
@@ -800,7 +803,7 @@ def run_tray(bridge: Bridge) -> None:
                 radio=True)
 
     def mode_items():
-        labels = {"isolator": "Isolator (deep kills, +9 dB)", "gentle": "Gentle EQ (tone control)"}
+        labels = {"isolator": "ISOLATOR  (DJM-A9 curve, -inf..+6 dB)", "eq": "EQ  (DJM-A9 curve, -26..+6 dB)"}
         for key in bridge.cfg["eq_modes"]:
             yield pystray.MenuItem(
                 labels.get(key, key), act(bridge.set_mode, key),
