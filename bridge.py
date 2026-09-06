@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.2"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -87,6 +87,10 @@ DEFAULT_CONFIG = {
     "fader_cc": 19,
     # Fader at the bottom mutes; just above it starts at fader_min_db.
     "fader_min_db": -60.0,
+    # Fader curve like the DJM-A9's CH FADER CURVE switch: "gradual" rises
+    # mostly near the top, "even" is a plain audio taper, "fast" rises
+    # sharply near the bottom (for cuts/transforms).
+    "fader_curve": "even",
     # CFX / FILTER knob -> DJ filter: left = low-pass sweeping down, right =
     # high-pass sweeping up, centre = off. On DDJ-200/400/FLX4 the CFX knobs
     # sit on MIDI channel 7, CC 23 (deck 1) / 24 (deck 2): cc = base + strip-1.
@@ -273,11 +277,14 @@ class ApoWriter:
         frac = (d - dead) / span
         return float(m["boost_db"]) * frac
 
+    FADER_CURVES = {"gradual": 3.0, "even": 1.0, "fast": 1.0 / 3.0}
+
     def fader_to_db(self, value14: int) -> float:
-        """Fader top = 0 dB, log taper down to fader_min_db, bottom = mute."""
+        """Fader top = 0 dB, curved taper down to fader_min_db, bottom = mute."""
         x = max(0, min(16383, value14)) / 16383.0
         if x < 0.005:
             return -100.0
+        x = x ** self.FADER_CURVES.get(str(self.cfg.get("fader_curve", "even")), 1.0)
         return max(float(self.cfg["fader_min_db"]), 20.0 * math.log10(x))
 
     @staticmethod
@@ -659,6 +666,16 @@ class Bridge:
         log.info("Filter resonance -> Q %.2f", q)
         self._notify()
 
+    def set_fader_curve(self, curve: str) -> None:
+        if curve not in ApoWriter.FADER_CURVES or curve == self.cfg.get("fader_curve"):
+            return
+        self.cfg["fader_curve"] = curve
+        save_config(self.cfg, self.config_path)
+        if FADER in self.raw:  # re-map the fader's current position
+            self.apo.set_target(FADER, self.apo.fader_to_db(self.raw[FADER]))
+        log.info("Fader curve -> %s", curve)
+        self._notify()
+
     def set_user_bypass(self, on: bool) -> None:
         if on == self.user_bypass:
             return
@@ -891,6 +908,15 @@ def run_tray(bridge: Bridge) -> None:
                 checked=chk(lambda v: abs(float(bridge.cfg["filter_q"]) - v) < 0.05, q),
                 radio=True)
 
+    def fader_curve_items():
+        for key, label in (("gradual", "Gradual  (rises near the top)"),
+                           ("even", "Even"),
+                           ("fast", "Fast  (rises near the bottom)")):
+            yield pystray.MenuItem(
+                label, act(bridge.set_fader_curve, key),
+                checked=chk(lambda k: bridge.cfg.get("fader_curve", "even") == k, key),
+                radio=True)
+
     def learn_items():
         for ctl, label in (("hi", "HI knob"), ("mid", "MID knob"), ("low", "LOW knob"),
                            (FADER, "Fader"), (FILTER, "Filter / CFX knob")):
@@ -906,6 +932,7 @@ def run_tray(bridge: Bridge) -> None:
         pystray.MenuItem("Mixer channel", pystray.Menu(channel_items)),
         pystray.MenuItem("EQ mode", pystray.Menu(mode_items)),
         pystray.MenuItem("Filter resonance", pystray.Menu(resonance_items)),
+        pystray.MenuItem("Fader curve", pystray.Menu(fader_curve_items)),
         pystray.MenuItem("Bypass EQ",
                          act(lambda: bridge.set_user_bypass(not bridge.user_bypass)),
                          checked=chk(lambda: bridge.user_bypass)),
