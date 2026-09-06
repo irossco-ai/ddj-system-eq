@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -50,7 +50,8 @@ LOG_PATH = APP_DIR / "bridge.log"
 
 BANDS = ("low", "mid", "hi")
 FADER = "fader"
-CONTROLS = BANDS + (FADER,)
+FILTER = "filter"
+CONTROLS = BANDS + (FADER, FILTER)
 LEARN_TIMEOUT_S = 20
 
 # Known controllers: how many mixer channels the tray should offer. Every one
@@ -86,6 +87,22 @@ DEFAULT_CONFIG = {
     "fader_cc": 19,
     # Fader at the bottom mutes; just above it starts at fader_min_db.
     "fader_min_db": -60.0,
+    # CFX / FILTER knob -> DJ filter: left = low-pass sweeping down, right =
+    # high-pass sweeping up, centre = off. On DDJ-200/400/FLX4 the CFX knobs
+    # sit on MIDI channel 7, CC 23 (deck 1) / 24 (deck 2): cc = base + strip-1.
+    # "MIDI learn" fills filter_cc/filter_channel for other layouts.
+    "filter_enabled": True,
+    "filter_channel": 7,
+    "filter_cc_base": 23,
+    "filter_cc": None,
+    # Two cascaded 12 dB/oct stages = 24 dB/oct. Q sets resonance like the
+    # DJM-A9's PARAMETER knob: 0.707 = none, 1.0 = mild, 1.5+ = strong.
+    "filter_stages": 2,
+    "filter_q": 1.0,
+    "filter_lp_min_hz": 80,
+    "filter_hp_max_hz": 8000,
+    # Fraction of the knob's travel the filter may glide per APO update.
+    "max_filter_step_per_tick": 0.12,
     # Fraction of knob travel either side of the centre detent that is 0 dB.
     "center_deadband": 0.02,
     # Which response the knobs have. Switchable from the tray - the two modes
@@ -263,6 +280,28 @@ class ApoWriter:
             return -100.0
         return max(float(self.cfg["fader_min_db"]), 20.0 * math.log10(x))
 
+    @staticmethod
+    def knob_to_position(value14: int) -> float:
+        """Filter knob as -1 (full left) .. 0 (centre) .. +1 (full right)."""
+        return max(0, min(16383, value14)) / 16383.0 * 2.0 - 1.0
+
+    def filter_lines(self, pos: float) -> list[str]:
+        """APO filter lines for a knob position; [] when centred."""
+        dead = float(self.cfg["center_deadband"])
+        if abs(pos) <= dead or not self.cfg.get("filter_enabled", True):
+            return []
+        frac = (abs(pos) - dead) / (1.0 - dead)  # 0..1 of the usable travel
+        if pos < 0:  # low-pass: 20 kHz down to lp_min (log sweep)
+            lo = float(self.cfg["filter_lp_min_hz"])
+            fc = 20000.0 * (lo / 20000.0) ** frac
+            kind = "LPQ"
+        else:        # high-pass: 20 Hz up to hp_max (log sweep)
+            hi = float(self.cfg["filter_hp_max_hz"])
+            fc = 20.0 * (hi / 20.0) ** frac
+            kind = "HPQ"
+        line = f"Filter: ON {kind} Fc {fc:.0f} Hz Q {float(self.cfg['filter_q']):.3f}"
+        return [line] * max(1, int(self.cfg["filter_stages"]))
+
     # -- public API --------------------------------------------------------- #
     def set_target(self, control: str, db: float) -> None:
         with self._lock:
@@ -325,16 +364,19 @@ class ApoWriter:
             if self.bypassed:
                 return
             step = float(self.cfg["max_db_step_per_tick"])
+            fstep = float(self.cfg["max_filter_step_per_tick"])
             changed = False
             for c in CONTROLS:
                 delta = self.target[c] - self.current[c]
-                if abs(delta) < 0.05:
+                eps = 0.002 if c == FILTER else 0.05
+                if abs(delta) < eps:
                     if self.current[c] != self.target[c]:
                         self.current[c] = self.target[c]
                         changed = True
                     continue
-                # The fader covers a much wider dB range, so let it move faster.
-                lim = step * 3 if c == FADER else step
+                # Fader spans a much wider dB range; the filter moves in knob
+                # position (-1..1), which is a log-frequency glide.
+                lim = fstep if c == FILTER else (step * 3 if c == FADER else step)
                 self.current[c] += max(-lim, min(lim, delta))
                 changed = True
             if not changed:
@@ -368,6 +410,7 @@ class ApoWriter:
             if ftype in ("PK", "LSC", "HSC", "LPQ", "HPQ"):
                 line += f" Q {float(spec.get('q', 0.7)):.2f}"
             lines.extend([line] * stages)
+        lines.extend(self.filter_lines(gains.get(FILTER, 0.0)))
         return "\n".join(lines) + "\n"
 
     @staticmethod
@@ -415,6 +458,10 @@ class MidiInput:
         if cfg.get("fader_enabled", True):
             self.msb_map[int(cfg["fader_cc"])] = FADER
             self.lsb_map[int(cfg["fader_cc"]) + lsb] = FADER
+        # The CFX knob lives on its own MIDI channel (7-bit, no LSB pair).
+        self.filter_channel = int(cfg.get("filter_channel", 7)) - 1
+        override = cfg.get("filter_cc")
+        self.filter_cc = int(override) if override is not None else int(cfg["filter_cc_base"]) + self.channel
         self._msb.clear()
 
     @staticmethod
@@ -480,7 +527,14 @@ class MidiInput:
             if self.on_raw is not None:
                 self.on_raw(status, control, value)
             # 0xB0..0xBF = control change on channel (status & 0x0F)
-            if (status & 0xF0) != 0xB0 or (status & 0x0F) != self.channel:
+            if (status & 0xF0) != 0xB0:
+                return
+            ch = status & 0x0F
+            if (self.cfg.get("filter_enabled", True) and ch == self.filter_channel
+                    and control == self.filter_cc):
+                self.on_knob(FILTER, value << 7)
+                return
+            if ch != self.channel:
                 return
             if control in self.msb_map:
                 band = self.msb_map[control]
@@ -566,6 +620,7 @@ class Bridge:
         if n == int(self.cfg["midi_channel"]):
             return
         self.cfg["midi_channel"] = int(n)
+        self.cfg["filter_cc"] = None  # follow the strip again (base + strip-1)
         self.midi.reconfigure()
         save_config(self.cfg, self.config_path)
         log.info("Mixer channel -> %d", n)
@@ -649,14 +704,20 @@ class Bridge:
             return  # fine-resolution LSB of a 14-bit pair; wait for the MSB
         target = self.learning
         self.learning = None
-        if target == FADER:
-            self.cfg["fader_cc"] = control
+        ch = (status & 0x0F) + 1
+        if target == FILTER:
+            # The filter knob has its own channel; don't touch the mixer strip.
+            self.cfg["filter_cc"] = control
+            self.cfg["filter_channel"] = ch
         else:
-            self.cfg["cc"][target] = control
-        self.cfg["midi_channel"] = (status & 0x0F) + 1
+            if target == FADER:
+                self.cfg["fader_cc"] = control
+            else:
+                self.cfg["cc"][target] = control
+            self.cfg["midi_channel"] = ch
         self.midi.reconfigure()
         save_config(self.cfg, self.config_path)
-        log.info("MIDI learn: %s = CC %d on channel %d", target.upper(), control, self.cfg["midi_channel"])
+        log.info("MIDI learn: %s = CC %d on channel %d", target.upper(), control, ch)
         self._notify()
 
     def _on_knob(self, control: str, value14: int) -> None:
@@ -665,6 +726,8 @@ class Bridge:
             return
         if control == FADER:
             self.apo.set_target(control, self.apo.fader_to_db(value14))
+        elif control == FILTER:
+            self.apo.set_target(control, self.apo.knob_to_position(value14))
         else:
             self.apo.set_target(control, self.apo.knob_to_db(value14))
 
@@ -811,7 +874,8 @@ def run_tray(bridge: Bridge) -> None:
                 radio=True)
 
     def learn_items():
-        for ctl, label in (("hi", "HI knob"), ("mid", "MID knob"), ("low", "LOW knob"), (FADER, "Fader")):
+        for ctl, label in (("hi", "HI knob"), ("mid", "MID knob"), ("low", "LOW knob"),
+                           (FADER, "Fader"), (FILTER, "Filter / CFX knob")):
             yield pystray.MenuItem(label, act(bridge.learn, ctl))
 
     def quit_(icon_, _item):
