@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -649,6 +649,16 @@ class Bridge:
         log.info("EQ mode -> %s", mode)
         self._notify()
 
+    def set_filter_q(self, q: float) -> None:
+        """Filter resonance (the DJM-A9's PARAMETER knob) for units without one."""
+        if abs(float(self.cfg["filter_q"]) - q) < 1e-6:
+            return
+        self.cfg["filter_q"] = float(q)
+        save_config(self.cfg, self.config_path)
+        self.apo.force_rewrite()
+        log.info("Filter resonance -> Q %.2f", q)
+        self._notify()
+
     def set_user_bypass(self, on: bool) -> None:
         if on == self.user_bypass:
             return
@@ -873,6 +883,14 @@ def run_tray(bridge: Bridge) -> None:
                 checked=chk(lambda k: bridge.cfg["eq_mode"] == k, key),
                 radio=True)
 
+    def resonance_items():
+        for label, q in (("None  (Q 0.7)", 0.707), ("Mild  (Q 1.0)", 1.0),
+                         ("Medium  (Q 1.4)", 1.4), ("Strong  (Q 2.0)", 2.0)):
+            yield pystray.MenuItem(
+                label, act(bridge.set_filter_q, q),
+                checked=chk(lambda v: abs(float(bridge.cfg["filter_q"]) - v) < 0.05, q),
+                radio=True)
+
     def learn_items():
         for ctl, label in (("hi", "HI knob"), ("mid", "MID knob"), ("low", "LOW knob"),
                            (FADER, "Fader"), (FILTER, "Filter / CFX knob")):
@@ -887,6 +905,7 @@ def run_tray(bridge: Bridge) -> None:
         pystray.MenuItem("Controller", pystray.Menu(controller_items)),
         pystray.MenuItem("Mixer channel", pystray.Menu(channel_items)),
         pystray.MenuItem("EQ mode", pystray.Menu(mode_items)),
+        pystray.MenuItem("Filter resonance", pystray.Menu(resonance_items)),
         pystray.MenuItem("Bypass EQ",
                          act(lambda: bridge.set_user_bypass(not bridge.user_bypass)),
                          checked=chk(lambda: bridge.user_bypass)),
