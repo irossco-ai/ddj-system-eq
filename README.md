@@ -127,6 +127,7 @@ EQ mode         ▸  ISOLATOR (DJM-A9 curve, −∞..+6 dB) ✓ / EQ (DJM-A9 cur
                    4-band DJM-V10 (CFX knob = LOW) / 4-band Xone:96 / 4-band Xone:92 Mk2
 Filter resonance ▸ None (Q 0.7) / Mild (Q 1.0) ✓ / Medium (Q 1.4) / Strong (Q 2.0)
 Fader curve     ▸  Concave (rises near the top) / Linear ✓ / Early ramp (rises near the bottom)
+Response        ▸  Smooth (anti-click ramp) ✓ / Fast (one step, ~20 ms; may click on sustained bass)
 Bass boost (auto-compensated) ▸ Off ✓ / +3 / +6 / +9 dB  ·  below 40 / 60 / 80 ✓ / 100 Hz
 Bypass EQ          (toggle)
 MIDI learn      ▸  HI knob / MID knob / LOW knob / Fader / Filter-CFX knob
@@ -163,7 +164,8 @@ Edit `config.json` (UTF-8, restart the bridge after hand edits).
 | `filter_lp_min_hz` / `filter_hp_max_hz` | 80 / 8000 | Cutoff reached at full left / full right |
 | `filter_channel` / `filter_cc_base` | 7 / 23 | Where the CFX knob lives; CC = base + strip − 1. `filter_cc` (set by MIDI learn) overrides |
 | `max_filter_step_per_tick` | 0.12 | Filter glide speed (fraction of travel per update) |
-| `max_db_step_per_tick` / `write_rate_hz` | 12 dB / 40 | Anti-click ramp. Lower the step if you hear clicks on fast sweeps |
+| `response` / `response_presets` | `smooth` | Tray → *Response*. `smooth` = 12 dB per update at 40 Hz (a full kill takes ~125 ms, never clicks); `fast` = 60 dB at 60 Hz (~20 ms, can click on sustained bass). Edit the presets to taste |
+| `max_db_step_per_tick` / `write_rate_hz` | 12 dB / 40 | Legacy top-level ramp values, used only when the active preset lacks a key |
 | `dj_software_process_names` | rekordbox, Serato, djay, VirtualDJ, Traktor | Any of these running → bridge yields |
 | `restore_on_start` | true | Re-apply the last curve on start; knobs are absolute, so the first touch snaps to the physical position |
 

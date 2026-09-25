@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.6.3"
+APP_VERSION = "1.6.4"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -219,7 +219,15 @@ DEFAULT_CONFIG = {
     ],
     "process_poll_seconds": 0.5,
     "device_poll_seconds": 2.0,
-    # APO reload rate and the largest gain jump per reload (anti-click).
+    # Knob response. "smooth" ramps gains a few dB per APO reload so a big
+    # jump cannot click; "fast" applies a move in one step at the cost of a
+    # possible click on sustained bass. Per-preset values below; the three
+    # legacy top-level keys are still honoured when a preset lacks a value.
+    "response": "smooth",
+    "response_presets": {
+        "smooth": {"write_rate_hz": 40, "max_db_step_per_tick": 12.0, "max_filter_step_per_tick": 0.12},
+        "fast": {"write_rate_hz": 60, "max_db_step_per_tick": 60.0, "max_filter_step_per_tick": 0.3},
+    },
     "write_rate_hz": 40,
     "max_db_step_per_tick": 12.0,
     # Re-apply the last EQ curve when the bridge starts / regains the device.
@@ -341,6 +349,11 @@ class ApoWriter:
         modes = self.cfg["eq_modes"]
         return modes.get(self.cfg["eq_mode"]) or modes["isolator"]
 
+    def tuning(self, key: str) -> float:
+        """Ramp parameter from the active response preset (falls back to the top-level key)."""
+        preset = self.cfg.get("response_presets", {}).get(self.cfg.get("response", "smooth"), {})
+        return float(preset.get(key, self.cfg[key]))
+
     def four_band(self) -> bool:
         """True when the CFX/FILTER knob is an EQ band (Xone layout)."""
         return bool(self.mode().get("four_band"))
@@ -461,8 +474,8 @@ class ApoWriter:
         with self._lock:
             if self.bypassed:
                 return
-            step = float(self.cfg["max_db_step_per_tick"])
-            fstep = float(self.cfg["max_filter_step_per_tick"])
+            step = self.tuning("max_db_step_per_tick")
+            fstep = self.tuning("max_filter_step_per_tick")
             filter_is_position = not self.four_band()
             changed = False
             for c in CONTROLS:
@@ -811,6 +824,15 @@ class Bridge:
                  self.cfg["bass_boost_db"], self.cfg["bass_boost_hz"])
         self._notify()
 
+    def set_response(self, name: str) -> None:
+        """Knob response preset: smooth (anti-click ramp) or fast (one-step)."""
+        if name not in self.cfg.get("response_presets", {}) or name == self.cfg.get("response"):
+            return
+        self.cfg["response"] = name
+        save_config(self.cfg, self.config_path)
+        log.info("Response -> %s", name)
+        self._notify()
+
     def set_fader_curve(self, curve: str) -> None:
         if curve not in ApoWriter.FADER_CURVES or curve == self.cfg.get("fader_curve"):
             return
@@ -962,10 +984,9 @@ class Bridge:
             self._stop.wait(0.1)
 
     def _writer(self) -> None:
-        period = 1.0 / float(self.cfg["write_rate_hz"])
         while not self._stop.is_set():
             self.apo.tick()
-            self._stop.wait(period)
+            self._stop.wait(1.0 / self.apo.tuning("write_rate_hz"))
 
 
 # --------------------------------------------------------------------------- #
@@ -1065,6 +1086,14 @@ def run_tray(bridge: Bridge) -> None:
                 checked=chk(lambda v: abs(float(bridge.cfg["filter_q"]) - v) < 0.05, q),
                 radio=True)
 
+    def response_items():
+        for key, label in (("smooth", "Smooth  (anti-click ramp, ~125 ms for a full kill)"),
+                           ("fast", "Fast  (one step, ~20 ms; may click on sustained bass)")):
+            yield pystray.MenuItem(
+                label, act(bridge.set_response, key),
+                checked=chk(lambda k: bridge.cfg.get("response", "smooth") == k, key),
+                radio=True)
+
     def fader_curve_items():
         for key, label in (("concave", "Concave  (rises near the top)"),
                            ("linear", "Linear"),
@@ -1105,6 +1134,7 @@ def run_tray(bridge: Bridge) -> None:
         pystray.MenuItem("EQ mode", pystray.Menu(mode_items)),
         pystray.MenuItem("Filter resonance", pystray.Menu(resonance_items)),
         pystray.MenuItem("Fader curve", pystray.Menu(fader_curve_items)),
+        pystray.MenuItem("Response", pystray.Menu(response_items)),
         pystray.MenuItem("Bass boost (auto-compensated)", pystray.Menu(bass_boost_items)),
         pystray.MenuItem("Bypass EQ",
                          act(lambda: bridge.set_user_bypass(not bridge.user_bypass)),
