@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.6.2"
+APP_VERSION = "1.6.3"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -148,6 +148,26 @@ DEFAULT_CONFIG = {
                 "low": {"type": "LS", "fc": 120, "stages": 1},
                 "mid": {"type": "PK", "fc": 1000, "q": 0.6, "stages": 1},
                 "hi": {"type": "HS", "fc": 8000, "stages": 1},
+            },
+        },
+        # DJM-900NXS2 (same EQ/ISOLATOR switch as the A9). Pioneer specifies
+        # its ranges at 13 kHz / 1 kHz / 70 Hz, so the shelves sit a little
+        # closer in than the A9's: HI corner 6 kHz, LOW corner 150 Hz.
+        "nxs2_isolator": {
+            "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
+            "bands": {
+                "low": {"type": "LS", "fc": 150, "stages": 3},
+                "mid": {"type": "PK", "fc": 1000, "centres": [300, 600, 1200, 2400], "q": 1.4,
+                        "bell_scale": 0.55, "boost_db": 8.0},
+                "hi": {"type": "HS", "fc": 6000, "stages": 3},
+            },
+        },
+        "nxs2_eq": {
+            "kill_db": -26.0, "boost_db": 6.0, "kill_curve": 1.0, "auto_preamp": False,
+            "bands": {
+                "low": {"type": "LS", "fc": 150, "stages": 1},
+                "mid": {"type": "PK", "fc": 1000, "q": 0.6, "stages": 1},
+                "hi": {"type": "HS", "fc": 6000, "stages": 1},
             },
         },
         # Four-band modes (Allen & Heath Xone layout). The CFX/FILTER knob
@@ -1025,6 +1045,8 @@ def run_tray(bridge: Bridge) -> None:
         labels = {
             "isolator": "ISOLATOR  (DJM-A9 curve, -inf..+6 dB)",
             "eq": "EQ  (DJM-A9 curve, -26..+6 dB)",
+            "nxs2_isolator": "ISOLATOR  (DJM-900NXS2 curve)",
+            "nxs2_eq": "EQ  (DJM-900NXS2 curve)",
             "djmv10": "4-band DJM-V10  (CFX knob = LOW)",
             "xone96": "4-band Xone:96  (CFX knob = LO)",
             "xone92": "4-band Xone:92 Mk2  (CFX knob = LO)",

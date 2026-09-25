@@ -123,6 +123,7 @@ are normal (PyInstaller launcher + app).
 Controller      ▸  DDJ-400  –  DDJ-400 ✓ / …
 Mixer channel   ▸  Channel 1 / Channel 2 ✓ / (3 / 4 on 4-channel decks)
 EQ mode         ▸  ISOLATOR (DJM-A9 curve, −∞..+6 dB) ✓ / EQ (DJM-A9 curve, −26..+6 dB)
+                   ISOLATOR (DJM-900NXS2 curve) / EQ (DJM-900NXS2 curve)
                    4-band DJM-V10 (CFX knob = LOW) / 4-band Xone:96 / 4-band Xone:92 Mk2
 Filter resonance ▸ None (Q 0.7) / Mild (Q 1.0) ✓ / Medium (Q 1.4) / Strong (Q 2.0)
 Fader curve     ▸  Concave (rises near the top) / Linear ✓ / Early ramp (rises near the bottom)
@@ -143,7 +144,8 @@ Edit `config.json` (UTF-8, restart the bridge after hand edits).
 
 | Key | Default | What it does |
 |---|---|---|
-| `eq_mode` | `isolator` | `isolator`, `eq`, `djmv10`, `xone96` or `xone92`; each mode's curve lives under `eq_modes` |
+| `eq_mode` | `isolator` | `isolator`, `eq`, `nxs2_isolator`, `nxs2_eq`, `djmv10`, `xone96` or `xone92`; each mode's curve lives under `eq_modes` |
+| `eq_modes.nxs2_*` | LOW 150 Hz · MID 1 kHz · HI 6 kHz | DJM-900NXS2 curves (Pioneer specifies its ranges at 70 Hz / 1 kHz / 13 kHz, so the shelves sit closer in than the A9's) |
 | `eq_modes.djmv10.bands` | LOW 200 Hz −∞/+6 · LOW MID 400 Hz −26/+6 · HI MID 1.2 kHz −26/+6 · HI 2 kHz −∞/+6 | DJM-V10 channel EQ (Pioneer manual) |
 | `eq_modes.xone96.bands` | LO 180 Hz +6/−∞ · LO MID 350 Hz +10/−27 · HI MID 1.1 kHz +10/−27 · HI 3 kHz +6/−∞ | Xone:96 channel EQ; `four_band: true` puts LO on the CFX knob. Per-band `kill_db`/`boost_db` override the mode's |
 | `eq_modes.xone92.bands` | LO 220 Hz +6/−∞ · LM 320 Hz +6/−30 · HM 1.8 kHz +6/−30 · HI 2.4 kHz +6/−∞ | Xone:92 Mk2 channel EQ (A&H spec sheet). −∞ rendered as −60 dB over 3 stages; mids are single bells, Q 0.7 (A&H doesn't publish Q) |
