@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.6.4"
+APP_VERSION = "1.6.5"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -173,16 +173,25 @@ DEFAULT_CONFIG = {
         # Four-band modes (Allen & Heath Xone layout). The CFX/FILTER knob
         # becomes the LO band, LOW -> LO MID, MID -> HI MID, HI -> HI; the DJ
         # filter is off in these modes. Per-band ranges override the mode's.
-        # Xone:96 channel EQ: HI 3 kHz +6/-inf, HI MID 1.1 kHz +10/-27,
-        # LO MID 350 Hz +10/-27, LO 180 Hz +6/-inf.
+        # Xone:96 channel EQ, matched to the response graphs in the A&H user
+        # guide (p.10): HI 3 kHz +6/-inf, HI MID 1.1 kHz +10/-27, LO MID
+        # 350 Hz +10/-27, LO 180 Hz +6/-inf. The graphs show the kills are
+        # gentle 12 dB/oct filters (LO: -10 dB @ 200 Hz, -22 @ 100 Hz; HI:
+        # -15 @ 3 kHz, -30 @ 8 kHz), the +6 shelves reach full gain by
+        # ~100 Hz / ~3 kHz, and the mid bells are asymmetric: narrow boost
+        # (Q ~1.3), wide cut (Q ~0.8).
         "xone96": {
             "four_band": True,
-            "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
+            "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.0, "auto_preamp": False,
             "bands": {
-                "filter": {"type": "LS", "fc": 180, "stages": 3},
-                "low": {"type": "PK", "fc": 350, "q": 1.0, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
-                "mid": {"type": "PK", "fc": 1100, "q": 1.0, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
-                "hi": {"type": "HS", "fc": 3000, "stages": 3},
+                "filter": {"type": "LS", "fc": 180, "boost_fc": 220, "stages": 1,
+                           "shelf_cap_db": -2.0, "kill_edge_stages": 1, "kill_edge_fc": 320, "kill_edge_q": 0.707},
+                "low": {"type": "PK", "fc": 350, "q_boost": 1.3, "q_cut": 0.8, "stages": 1,
+                        "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
+                "mid": {"type": "PK", "fc": 1100, "q_boost": 1.3, "q_cut": 0.8, "stages": 1,
+                        "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
+                "hi": {"type": "HS", "fc": 3000, "boost_fc": 1500, "stages": 1,
+                       "shelf_cap_db": -4.0, "kill_edge_stages": 1, "kill_edge_fc": 2000, "kill_edge_q": 0.4},
             },
         },
         # Pioneer DJM-V10 channel EQ (manual): HI 2 kHz -inf/+6,
@@ -198,15 +207,22 @@ DEFAULT_CONFIG = {
             },
         },
         # Xone:92 Mk2 channel EQ (A&H spec sheet): HI 2.4 kHz +6/-inf,
-        # HM 1.8 kHz +6/-30, LM 320 Hz +6/-30, LO 220 Hz +6/-inf.
+        # HM 1.8 kHz +6/-30, LM 320 Hz +6/-30, LO 220 Hz +6/-inf. Same EQ
+        # family as the 96, so the same gentle-kill / asymmetric-bell shapes
+        # are applied, scaled to its frequencies (no 92 graphs to hand -
+        # extrapolated from the 96's).
         "xone92": {
             "four_band": True,
-            "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
+            "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.0, "auto_preamp": False,
             "bands": {
-                "filter": {"type": "LS", "fc": 220, "stages": 3},
-                "low": {"type": "PK", "fc": 320, "q": 1.0, "stages": 1, "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
-                "mid": {"type": "PK", "fc": 1800, "q": 1.0, "stages": 1, "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
-                "hi": {"type": "HS", "fc": 2400, "stages": 3},
+                "filter": {"type": "LS", "fc": 220, "boost_fc": 270, "stages": 1,
+                           "shelf_cap_db": -2.0, "kill_edge_stages": 1, "kill_edge_fc": 390, "kill_edge_q": 0.707},
+                "low": {"type": "PK", "fc": 320, "q_boost": 1.3, "q_cut": 0.8, "stages": 1,
+                        "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "mid": {"type": "PK", "fc": 1800, "q_boost": 1.3, "q_cut": 0.8, "stages": 1,
+                        "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "hi": {"type": "HS", "fc": 2400, "boost_fc": 1200, "stages": 1,
+                       "shelf_cap_db": -4.0, "kill_edge_stages": 1, "kill_edge_fc": 1600, "kill_edge_q": 0.4},
             },
         },
     },
@@ -523,22 +539,25 @@ class ApoWriter:
             stages = max(1, int(spec.get("stages", 1)))
             g = gains[b]
             kill = float(spec.get("kill_db", m["kill_db"]))
-            if ftype in ("LS", "HS") and kill <= ISOLATOR_KILL_DB and g < SHELF_CAP_DB:
-                # Isolator-style kill. A deep shelf's transition is two
-                # octaves wide, so it eats the neighbouring band. Cap the
-                # shelf and bring in a 24 dB/oct high/low-pass whose cutoff
-                # sweeps from inaudible up to the crossover as the knob
-                # reaches kill - steep edge, neighbour untouched, continuous.
-                t = min(1.0, (SHELF_CAP_DB - g) / (SHELF_CAP_DB - kill))
-                fc = float(spec["fc"])
+            cap = float(spec.get("shelf_cap_db", SHELF_CAP_DB))
+            if ftype in ("LS", "HS") and kill <= ISOLATOR_KILL_DB and g < cap:
+                # "-inf" kill. A deep shelf's transition is two octaves wide,
+                # so it eats the neighbouring band. Cap the shelf and bring in
+                # a high/low-pass whose cutoff sweeps from inaudible up to
+                # kill_edge_fc as the knob reaches kill - continuous, and the
+                # shape (steep isolator vs the Xone's gentle 12 dB/oct) is
+                # set by kill_edge_stages / kill_edge_fc / shelf_cap_db.
+                t = min(1.0, (cap - g) / (cap - kill))
+                edge_fc = float(spec.get("kill_edge_fc", spec["fc"]))
+                edge_q = float(spec.get("kill_edge_q", 0.707))  # < 0.707 = softer knee
                 if ftype == "LS":
-                    cut = 20.0 * (fc / 20.0) ** t
-                    edge = f"Filter: ON HPQ Fc {cut:.0f} Hz Q 0.707"
+                    cut = 20.0 * (edge_fc / 20.0) ** t
+                    edge = f"Filter: ON HPQ Fc {cut:.0f} Hz Q {edge_q:.3f}"
                 else:
-                    cut = 20000.0 * (fc / 20000.0) ** t
-                    edge = f"Filter: ON LPQ Fc {cut:.0f} Hz Q 0.707"
-                lines.extend([edge] * 2)
-                g = SHELF_CAP_DB
+                    cut = 20000.0 * (edge_fc / 20000.0) ** t
+                    edge = f"Filter: ON LPQ Fc {cut:.0f} Hz Q {edge_q:.3f}"
+                lines.extend([edge] * max(1, int(spec.get("kill_edge_stages", 2))))
+                g = cap
             if "centres" in spec:
                 # Staggered bells = flat-topped band. Overlapping bells sum,
                 # so each bell gets g * bell_scale (tuned so full kill is a
@@ -548,9 +567,13 @@ class ApoWriter:
                     lines.append(f"Filter: ON PK Fc {float(c):g} Hz Gain {g * scale + 0.0:.1f} dB Q {float(spec.get('q', 0.7)):.2f}")
                 continue
             per_stage = g / stages + 0.0
-            line = f"Filter: ON {ftype} Fc {spec['fc']} Hz Gain {per_stage:.1f} dB"
+            # Asymmetric bands: a boost may sit at a different corner (boost_fc)
+            # or width (q_boost) than a cut (fc / q_cut), as on the Xone EQ.
+            fc = float(spec.get("boost_fc", spec["fc"])) if g > 0 else float(spec["fc"])
+            line = f"Filter: ON {ftype} Fc {fc:g} Hz Gain {per_stage:.1f} dB"
             if ftype in ("PK", "LSC", "HSC", "LPQ", "HPQ"):
-                line += f" Q {float(spec.get('q', 0.7)):.2f}"
+                q = spec.get("q_boost" if g > 0 else "q_cut", spec.get("q", 0.7))
+                line += f" Q {float(q):.2f}"
             lines.extend([line] * stages)
         if boost_db > 0:
             lines.append(f"Filter: ON LS Fc {boost_hz:g} Hz Gain {boost_db:.1f} dB")
