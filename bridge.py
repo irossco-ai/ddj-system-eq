@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.6.6"
+APP_VERSION = "1.6.7"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -559,7 +559,10 @@ class ApoWriter:
                     cut = 20000.0 * (edge_fc / 20000.0) ** t
                     edge = f"Filter: ON LPQ Fc {cut:.0f} Hz Q {edge_q:.3f}"
                 lines.extend([edge] * max(1, int(spec.get("kill_edge_stages", 2))))
-                g = deep + (cap - deep) * t
+                # The shelf relaxes from `deep` to `cap` only late in the
+                # travel (t^6), after the edge filter has arrived - otherwise
+                # the response would briefly rise mid-sweep (verified numerically).
+                g = deep + (cap - deep) * t ** float(spec.get("shelf_relax_exp", 6.0))
             if "centres" in spec:
                 # Staggered bells = flat-topped band. Overlapping bells sum,
                 # so each bell gets g * bell_scale (tuned so full kill is a
