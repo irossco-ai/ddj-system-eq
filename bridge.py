@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -151,6 +151,18 @@ DEFAULT_CONFIG = {
                 "low": {"type": "PK", "fc": 350, "q": 0.7, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
                 "mid": {"type": "PK", "fc": 1100, "q": 0.7, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
                 "hi": {"type": "HS", "fc": 3000, "stages": 3},
+            },
+        },
+        # Pioneer DJM-V10 channel EQ (manual): HI 2 kHz -inf/+6,
+        # HI MID 1.2 kHz -26/+6, LOW MID 400 Hz -26/+6, LOW 200 Hz -inf/+6.
+        "djmv10": {
+            "four_band": True,
+            "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
+            "bands": {
+                "filter": {"type": "LS", "fc": 200, "stages": 3},
+                "low": {"type": "PK", "fc": 400, "q": 0.7, "stages": 1, "kill_db": -26.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "mid": {"type": "PK", "fc": 1200, "q": 0.7, "stages": 1, "kill_db": -26.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "hi": {"type": "HS", "fc": 2000, "stages": 3},
             },
         },
         # Xone:92 Mk2 channel EQ (A&H spec sheet): HI 2.4 kHz +6/-inf,
@@ -975,6 +987,7 @@ def run_tray(bridge: Bridge) -> None:
         labels = {
             "isolator": "ISOLATOR  (DJM-A9 curve, -inf..+6 dB)",
             "eq": "EQ  (DJM-A9 curve, -26..+6 dB)",
+            "djmv10": "4-band DJM-V10  (CFX knob = LOW)",
             "xone96": "4-band Xone:96  (CFX knob = LO)",
             "xone92": "4-band Xone:92 Mk2  (CFX knob = LO)",
         }
