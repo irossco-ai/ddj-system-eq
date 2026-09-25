@@ -7,6 +7,9 @@ Spotify, games, anything — without launching rekordbox.
 - **HI / MID / LOW** knobs of one mixer channel → 3-band EQ on your output
   device, with the two curves of a DJM-A9's *EQ CURVE* switch: **ISOLATOR**
   (−∞…+6 dB, bands drop out) or **EQ** (−26…+6 dB) — switchable from the tray.
+- **4-band modes** with Allen & Heath **Xone:96** and **Xone:92 Mk2** channel
+  EQ figures: the CFX knob becomes **LO**, LOW → **LO MID**, MID → **HI MID**,
+  HI → **HI** (the DJ filter is off while a 4-band mode is selected).
 - **Channel fader** → master volume (log taper, mute at the bottom).
 - **CFX / FILTER knob** → DJ filter: left sweeps a low-pass down to 80 Hz,
   right sweeps a high-pass up to 8 kHz, centre is off. 24 dB/oct with mild
@@ -119,6 +122,7 @@ are normal (PyInstaller launcher + app).
 Controller      ▸  DDJ-400  –  DDJ-400 ✓ / …
 Mixer channel   ▸  Channel 1 / Channel 2 ✓ / (3 / 4 on 4-channel decks)
 EQ mode         ▸  ISOLATOR (DJM-A9 curve, −∞..+6 dB) ✓ / EQ (DJM-A9 curve, −26..+6 dB)
+                   4-band Xone:96 (CFX knob = LO) / 4-band Xone:92 Mk2 (CFX knob = LO)
 Filter resonance ▸ None (Q 0.7) / Mild (Q 1.0) ✓ / Medium (Q 1.4) / Strong (Q 2.0)
 Fader curve     ▸  Concave (rises near the top) / Linear ✓ / Early ramp (rises near the bottom)
 Bass boost (auto-compensated) ▸ Off ✓ / +3 / +6 / +9 dB  ·  below 40 / 60 / 80 ✓ / 100 Hz
@@ -138,7 +142,9 @@ Edit `config.json` (UTF-8, restart the bridge after hand edits).
 
 | Key | Default | What it does |
 |---|---|---|
-| `eq_mode` | `isolator` | `isolator` or `eq`; each mode's curve lives under `eq_modes` |
+| `eq_mode` | `isolator` | `isolator`, `eq`, `xone96` or `xone92`; each mode's curve lives under `eq_modes` |
+| `eq_modes.xone96.bands` | LO 180 Hz +6/−∞ · LO MID 350 Hz +10/−27 · HI MID 1.1 kHz +10/−27 · HI 3 kHz +6/−∞ | Xone:96 channel EQ; `four_band: true` puts LO on the CFX knob. Per-band `kill_db`/`boost_db` override the mode's |
+| `eq_modes.xone92.bands` | LO 220 Hz +6/−∞ · LM 320 Hz +6/−30 · HM 1.8 kHz +6/−30 · HI 2.4 kHz +6/−∞ | Xone:92 Mk2 channel EQ (A&H spec sheet). −∞ rendered as −60 dB over 3 stages; mids are single bells, Q 0.7 (A&H doesn't publish Q) |
 | `eq_modes.isolator.kill_db` / `boost_db` | −60 / +6 | DJM-A9 ISOLATOR range (−∞ rendered as −60 dB, band effectively gone) |
 | `eq_modes.eq.kill_db` / `boost_db` | −26 / +6 | DJM-A9 EQ range (Pioneer specifies it at 20 kHz / 1 kHz / 20 Hz) |
 | `eq_modes.*.bands.*.fc` | iso 200 / 1000 / 5000 Hz · eq 120 / 1000 / 8000 Hz | Low-shelf corner / mid centre / high-shelf corner. Pioneer doesn't publish corner frequencies; these are chosen to match the specified ranges |

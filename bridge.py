@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -136,6 +136,33 @@ DEFAULT_CONFIG = {
                 "low": {"type": "LS", "fc": 120, "stages": 1},
                 "mid": {"type": "PK", "fc": 1000, "q": 0.6, "stages": 1},
                 "hi": {"type": "HS", "fc": 8000, "stages": 1},
+            },
+        },
+        # Four-band modes (Allen & Heath Xone layout). The CFX/FILTER knob
+        # becomes the LO band, LOW -> LO MID, MID -> HI MID, HI -> HI; the DJ
+        # filter is off in these modes. Per-band ranges override the mode's.
+        # Xone:96 channel EQ: HI 3 kHz +6/-inf, HI MID 1.1 kHz +10/-27,
+        # LO MID 350 Hz +10/-27, LO 180 Hz +6/-inf.
+        "xone96": {
+            "four_band": True,
+            "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
+            "bands": {
+                "filter": {"type": "LS", "fc": 180, "stages": 3},
+                "low": {"type": "PK", "fc": 350, "q": 0.7, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
+                "mid": {"type": "PK", "fc": 1100, "q": 0.7, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
+                "hi": {"type": "HS", "fc": 3000, "stages": 3},
+            },
+        },
+        # Xone:92 Mk2 channel EQ (A&H spec sheet): HI 2.4 kHz +6/-inf,
+        # HM 1.8 kHz +6/-30, LM 320 Hz +6/-30, LO 220 Hz +6/-inf.
+        "xone92": {
+            "four_band": True,
+            "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
+            "bands": {
+                "filter": {"type": "LS", "fc": 220, "stages": 3},
+                "low": {"type": "PK", "fc": 320, "q": 0.7, "stages": 1, "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "mid": {"type": "PK", "fc": 1800, "q": 0.7, "stages": 1, "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "hi": {"type": "HS", "fc": 2400, "stages": 3},
             },
         },
     },
@@ -270,9 +297,21 @@ class ApoWriter:
         modes = self.cfg["eq_modes"]
         return modes.get(self.cfg["eq_mode"]) or modes["isolator"]
 
+    def four_band(self) -> bool:
+        """True when the CFX/FILTER knob is an EQ band (Xone layout)."""
+        return bool(self.mode().get("four_band"))
+
+    def mode_bands(self) -> list[str]:
+        """EQ bands of the current mode, low to high, keyed by control."""
+        return [b for b in (FILTER, "low", "mid", "hi") if b in self.mode()["bands"]]
+
     # -- gain mapping ------------------------------------------------------- #
-    def knob_to_db(self, value14: int) -> float:
+    def knob_to_db(self, value14: int, band: str | None = None) -> float:
         m = self.mode()
+        spec = m["bands"].get(band, {}) if band else {}
+        kill = float(spec.get("kill_db", m["kill_db"]))
+        boost = float(spec.get("boost_db", m["boost_db"]))
+        curve = float(spec.get("kill_curve", m.get("kill_curve", 1.0)))
         x = max(0, min(16383, value14)) / 16383.0
         d = x - 0.5
         dead = float(self.cfg["center_deadband"])
@@ -281,9 +320,9 @@ class ApoWriter:
         span = 0.5 - dead
         if d < 0:
             frac = (-d - dead) / span
-            return float(m["kill_db"]) * (frac ** float(m.get("kill_curve", 1.0)))
+            return kill * (frac ** curve)
         frac = (d - dead) / span
-        return float(m["boost_db"]) * frac
+        return boost * frac
 
     FADER_CURVES = {"concave": 3.0, "linear": 1.0, "early_ramp": 1.0 / 3.0}
 
@@ -380,10 +419,11 @@ class ApoWriter:
                 return
             step = float(self.cfg["max_db_step_per_tick"])
             fstep = float(self.cfg["max_filter_step_per_tick"])
+            filter_is_position = not self.four_band()
             changed = False
             for c in CONTROLS:
                 delta = self.target[c] - self.current[c]
-                eps = 0.002 if c == FILTER else 0.05
+                eps = 0.002 if (c == FILTER and filter_is_position) else 0.05
                 if abs(delta) < eps:
                     if self.current[c] != self.target[c]:
                         self.current[c] = self.target[c]
@@ -391,7 +431,7 @@ class ApoWriter:
                     continue
                 # Fader spans a much wider dB range; the filter moves in knob
                 # position (-1..1), which is a log-frequency glide.
-                lim = fstep if c == FILTER else (step * 3 if c == FADER else step)
+                lim = fstep if (c == FILTER and filter_is_position) else (step * 3 if c == FADER else step)
                 self.current[c] += max(-lim, min(lim, delta))
                 changed = True
             if not changed:
@@ -407,9 +447,10 @@ class ApoWriter:
     # -- rendering / IO ----------------------------------------------------- #
     def _render(self, gains: dict) -> str:
         m = self.mode()
+        bands = self.mode_bands()
         preamp = gains.get(FADER, 0.0)
         if m.get("auto_preamp"):
-            preamp -= max(0.0, max(gains[b] for b in BANDS))
+            preamp -= max(0.0, max(gains[b] for b in bands))
         boost_db = float(self.cfg.get("bass_boost_db", 0) or 0)
         boost_hz = float(self.cfg.get("bass_boost_hz", 80) or 80)
         preamp -= max(0.0, boost_db)  # auto-compensation: headroom for the boost
@@ -419,7 +460,7 @@ class ApoWriter:
             f"# Generated by {APP_NAME} ({self.cfg['eq_mode']}) - do not edit by hand",
             f"Preamp: {preamp:.1f} dB",
         ]
-        for b in BANDS:
+        for b in bands:
             spec = m["bands"][b]
             ftype = spec["type"]
             stages = max(1, int(spec.get("stages", 1)))
@@ -430,7 +471,8 @@ class ApoWriter:
             lines.extend([line] * stages)
         if boost_db > 0:
             lines.append(f"Filter: ON LS Fc {boost_hz:g} Hz Gain {boost_db:.1f} dB")
-        lines.extend(self.filter_lines(gains.get(FILTER, 0.0)))
+        if not self.four_band():
+            lines.extend(self.filter_lines(gains.get(FILTER, 0.0)))
         return "\n".join(lines) + "\n"
 
     @staticmethod
@@ -661,10 +703,13 @@ class Bridge:
             return
         self.cfg["eq_mode"] = mode
         save_config(self.cfg, self.config_path)
-        # Re-map the knobs' last positions through the new curve.
-        for band in BANDS:
-            if band in self.raw:
-                self.apo.set_target(band, self.apo.knob_to_db(self.raw[band]))
+        # Re-map the knobs' last positions through the new curve. The FILTER
+        # control changes meaning between 3- and 4-band modes (position vs
+        # dB), and 0 is "off"/flat in both, so restart it from 0.
+        self.apo.current[FILTER] = 0.0
+        for ctl in BANDS + (FILTER,):
+            if ctl in self.raw:
+                self.apo.set_target(ctl, self._map(ctl, self.raw[ctl]))
         self.apo.force_rewrite()
         log.info("EQ mode -> %s", mode)
         self._notify()
@@ -733,7 +778,8 @@ class Bridge:
         if self.state == "active" and self.user_bypass:
             return f"Bypassed (tray) - {self.midi.name}"
         return {
-            "active": f"Active - {self.midi.name}, channel {self.cfg['midi_channel']}, {self.cfg['eq_mode']}",
+            "active": f"Active - {self.midi.name}, channel {self.cfg['midi_channel']}, {self.cfg['eq_mode']}"
+                      + (" (4-band, CFX = LO)" if self.apo.four_band() else ""),
             "yielded": "Yielded - DJ software running, EQ bypassed",
             "no_device": "Waiting for controller",
             "starting": "Starting",
@@ -781,12 +827,15 @@ class Bridge:
         self.raw[control] = value14
         if self.state != "active" or self.user_bypass:
             return
+        self.apo.set_target(control, self._map(control, value14))
+
+    def _map(self, control: str, value14: int) -> float:
+        """Raw 14-bit knob value -> target (dB, or filter position)."""
         if control == FADER:
-            self.apo.set_target(control, self.apo.fader_to_db(value14))
-        elif control == FILTER:
-            self.apo.set_target(control, self.apo.knob_to_position(value14))
-        else:
-            self.apo.set_target(control, self.apo.knob_to_db(value14))
+            return self.apo.fader_to_db(value14)
+        if control == FILTER and not self.apo.four_band():
+            return self.apo.knob_to_position(value14)
+        return self.apo.knob_to_db(value14, control)
 
     def _supervisor(self) -> None:
         proc_iv = float(self.cfg["process_poll_seconds"])
@@ -923,7 +972,12 @@ def run_tray(bridge: Bridge) -> None:
                 radio=True)
 
     def mode_items():
-        labels = {"isolator": "ISOLATOR  (DJM-A9 curve, -inf..+6 dB)", "eq": "EQ  (DJM-A9 curve, -26..+6 dB)"}
+        labels = {
+            "isolator": "ISOLATOR  (DJM-A9 curve, -inf..+6 dB)",
+            "eq": "EQ  (DJM-A9 curve, -26..+6 dB)",
+            "xone96": "4-band Xone:96  (CFX knob = LO)",
+            "xone92": "4-band Xone:92 Mk2  (CFX knob = LO)",
+        }
         for key in bridge.cfg["eq_modes"]:
             yield pystray.MenuItem(
                 labels.get(key, key), act(bridge.set_mode, key),
