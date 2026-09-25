@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.6.5"
+APP_VERSION = "1.6.6"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -184,13 +184,13 @@ DEFAULT_CONFIG = {
             "four_band": True,
             "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.0, "auto_preamp": False,
             "bands": {
-                "filter": {"type": "LS", "fc": 180, "boost_fc": 220, "stages": 1,
+                "filter": {"type": "LS", "fc": 180, "boost_fc": 220, "stages": 1, "shelf_deep_db": -12.0,
                            "shelf_cap_db": -2.0, "kill_edge_stages": 1, "kill_edge_fc": 320, "kill_edge_q": 0.707},
                 "low": {"type": "PK", "fc": 350, "q_boost": 1.3, "q_cut": 0.8, "stages": 1,
                         "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
                 "mid": {"type": "PK", "fc": 1100, "q_boost": 1.3, "q_cut": 0.8, "stages": 1,
                         "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
-                "hi": {"type": "HS", "fc": 3000, "boost_fc": 1500, "stages": 1,
+                "hi": {"type": "HS", "fc": 3000, "boost_fc": 1500, "stages": 1, "shelf_deep_db": -12.0,
                        "shelf_cap_db": -4.0, "kill_edge_stages": 1, "kill_edge_fc": 2000, "kill_edge_q": 0.4},
             },
         },
@@ -215,13 +215,13 @@ DEFAULT_CONFIG = {
             "four_band": True,
             "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.0, "auto_preamp": False,
             "bands": {
-                "filter": {"type": "LS", "fc": 220, "boost_fc": 270, "stages": 1,
+                "filter": {"type": "LS", "fc": 220, "boost_fc": 270, "stages": 1, "shelf_deep_db": -12.0,
                            "shelf_cap_db": -2.0, "kill_edge_stages": 1, "kill_edge_fc": 390, "kill_edge_q": 0.707},
                 "low": {"type": "PK", "fc": 320, "q_boost": 1.3, "q_cut": 0.8, "stages": 1,
                         "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
                 "mid": {"type": "PK", "fc": 1800, "q_boost": 1.3, "q_cut": 0.8, "stages": 1,
                         "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
-                "hi": {"type": "HS", "fc": 2400, "boost_fc": 1200, "stages": 1,
+                "hi": {"type": "HS", "fc": 2400, "boost_fc": 1200, "stages": 1, "shelf_deep_db": -12.0,
                        "shelf_cap_db": -4.0, "kill_edge_stages": 1, "kill_edge_fc": 1600, "kill_edge_q": 0.4},
             },
         },
@@ -540,14 +540,16 @@ class ApoWriter:
             g = gains[b]
             kill = float(spec.get("kill_db", m["kill_db"]))
             cap = float(spec.get("shelf_cap_db", SHELF_CAP_DB))
-            if ftype in ("LS", "HS") and kill <= ISOLATOR_KILL_DB and g < cap:
+            deep = float(spec.get("shelf_deep_db", cap))  # shelf depth where the edge starts taking over
+            if ftype in ("LS", "HS") and kill <= ISOLATOR_KILL_DB and g < deep:
                 # "-inf" kill. A deep shelf's transition is two octaves wide,
-                # so it eats the neighbouring band. Cap the shelf and bring in
-                # a high/low-pass whose cutoff sweeps from inaudible up to
-                # kill_edge_fc as the knob reaches kill - continuous, and the
-                # shape (steep isolator vs the Xone's gentle 12 dB/oct) is
-                # set by kill_edge_stages / kill_edge_fc / shelf_cap_db.
-                t = min(1.0, (cap - g) / (cap - kill))
+                # so it eats the neighbouring band. Let the shelf deepen to
+                # shelf_deep_db, then bring in a high/low-pass whose cutoff
+                # sweeps from inaudible up to kill_edge_fc as the knob reaches
+                # kill while the shelf relaxes to shelf_cap_db - continuous,
+                # and the end-stop shape (steep isolator vs the Xone's gentle
+                # 12 dB/oct) is set by kill_edge_stages / kill_edge_fc / _q.
+                t = min(1.0, (deep - g) / (deep - kill))
                 edge_fc = float(spec.get("kill_edge_fc", spec["fc"]))
                 edge_q = float(spec.get("kill_edge_q", 0.707))  # < 0.707 = softer knee
                 if ftype == "LS":
@@ -557,7 +559,7 @@ class ApoWriter:
                     cut = 20000.0 * (edge_fc / 20000.0) ** t
                     edge = f"Filter: ON LPQ Fc {cut:.0f} Hz Q {edge_q:.3f}"
                 lines.extend([edge] * max(1, int(spec.get("kill_edge_stages", 2))))
-                g = cap
+                g = deep + (cap - deep) * t
             if "centres" in spec:
                 # Staggered bells = flat-topped band. Overlapping bells sum,
                 # so each bell gets g * bell_scale (tuned so full kill is a
