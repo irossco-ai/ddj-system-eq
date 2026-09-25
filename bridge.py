@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.6.2"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -53,6 +53,12 @@ FADER = "fader"
 FILTER = "filter"
 CONTROLS = BANDS + (FADER, FILTER)
 LEARN_TIMEOUT_S = 20
+# Isolator-type bands (kill range at or below ISOLATOR_KILL_DB, i.e. the
+# mixer says "-inf") render deep cuts as a shelf capped at SHELF_CAP_DB plus a
+# steep high/low-pass that sweeps in (see ApoWriter._render). Plain EQ bands
+# (e.g. -26 dB) stay ordinary shelves.
+SHELF_CAP_DB = -24.0
+ISOLATOR_KILL_DB = -40.0
 
 # Known controllers: how many mixer channels the tray should offer. Every one
 # of these uses the same mixer MIDI layout (strip N on MIDI channel N,
@@ -123,8 +129,14 @@ DEFAULT_CONFIG = {
         "isolator": {
             "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
             "bands": {
+                # LOW / HI: shelf up to -24 dB, then a 24 dB/oct edge filter
+                # sweeps in to the crossover for a true band kill.
                 "low": {"type": "LS", "fc": 200, "stages": 3},
-                "mid": {"type": "PK", "fc": 1000, "q": 0.5, "stages": 3},
+                # MID: four staggered bells make a flat-topped 200-5000 Hz
+                # band. bell_scale/boost_db tuned numerically: full kill is a
+                # flat ~-40 dB floor, full boost sums to about +6 dB.
+                "mid": {"type": "PK", "fc": 1000, "centres": [350, 700, 1400, 2850], "q": 1.4,
+                        "bell_scale": 0.55, "boost_db": 8.0},
                 "hi": {"type": "HS", "fc": 5000, "stages": 3},
             },
         },
@@ -148,8 +160,8 @@ DEFAULT_CONFIG = {
             "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
             "bands": {
                 "filter": {"type": "LS", "fc": 180, "stages": 3},
-                "low": {"type": "PK", "fc": 350, "q": 0.7, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
-                "mid": {"type": "PK", "fc": 1100, "q": 0.7, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
+                "low": {"type": "PK", "fc": 350, "q": 1.0, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
+                "mid": {"type": "PK", "fc": 1100, "q": 1.0, "stages": 1, "kill_db": -27.0, "boost_db": 10.0, "kill_curve": 1.0},
                 "hi": {"type": "HS", "fc": 3000, "stages": 3},
             },
         },
@@ -160,8 +172,8 @@ DEFAULT_CONFIG = {
             "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
             "bands": {
                 "filter": {"type": "LS", "fc": 200, "stages": 3},
-                "low": {"type": "PK", "fc": 400, "q": 0.7, "stages": 1, "kill_db": -26.0, "boost_db": 6.0, "kill_curve": 1.0},
-                "mid": {"type": "PK", "fc": 1200, "q": 0.7, "stages": 1, "kill_db": -26.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "low": {"type": "PK", "fc": 400, "q": 1.0, "stages": 1, "kill_db": -26.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "mid": {"type": "PK", "fc": 1200, "q": 1.0, "stages": 1, "kill_db": -26.0, "boost_db": 6.0, "kill_curve": 1.0},
                 "hi": {"type": "HS", "fc": 2000, "stages": 3},
             },
         },
@@ -172,8 +184,8 @@ DEFAULT_CONFIG = {
             "kill_db": -60.0, "boost_db": 6.0, "kill_curve": 1.5, "auto_preamp": False,
             "bands": {
                 "filter": {"type": "LS", "fc": 220, "stages": 3},
-                "low": {"type": "PK", "fc": 320, "q": 0.7, "stages": 1, "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
-                "mid": {"type": "PK", "fc": 1800, "q": 0.7, "stages": 1, "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "low": {"type": "PK", "fc": 320, "q": 1.0, "stages": 1, "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
+                "mid": {"type": "PK", "fc": 1800, "q": 1.0, "stages": 1, "kill_db": -30.0, "boost_db": 6.0, "kill_curve": 1.0},
                 "hi": {"type": "HS", "fc": 2400, "stages": 3},
             },
         },
@@ -476,7 +488,33 @@ class ApoWriter:
             spec = m["bands"][b]
             ftype = spec["type"]
             stages = max(1, int(spec.get("stages", 1)))
-            per_stage = gains[b] / stages + 0.0
+            g = gains[b]
+            kill = float(spec.get("kill_db", m["kill_db"]))
+            if ftype in ("LS", "HS") and kill <= ISOLATOR_KILL_DB and g < SHELF_CAP_DB:
+                # Isolator-style kill. A deep shelf's transition is two
+                # octaves wide, so it eats the neighbouring band. Cap the
+                # shelf and bring in a 24 dB/oct high/low-pass whose cutoff
+                # sweeps from inaudible up to the crossover as the knob
+                # reaches kill - steep edge, neighbour untouched, continuous.
+                t = min(1.0, (SHELF_CAP_DB - g) / (SHELF_CAP_DB - kill))
+                fc = float(spec["fc"])
+                if ftype == "LS":
+                    cut = 20.0 * (fc / 20.0) ** t
+                    edge = f"Filter: ON HPQ Fc {cut:.0f} Hz Q 0.707"
+                else:
+                    cut = 20000.0 * (fc / 20000.0) ** t
+                    edge = f"Filter: ON LPQ Fc {cut:.0f} Hz Q 0.707"
+                lines.extend([edge] * 2)
+                g = SHELF_CAP_DB
+            if "centres" in spec:
+                # Staggered bells = flat-topped band. Overlapping bells sum,
+                # so each bell gets g * bell_scale (tuned so full kill is a
+                # flat ~-40 dB floor and +6 sums to about +6 across the band).
+                scale = float(spec.get("bell_scale", 1.0))
+                for c in spec["centres"]:
+                    lines.append(f"Filter: ON PK Fc {float(c):g} Hz Gain {g * scale + 0.0:.1f} dB Q {float(spec.get('q', 0.7)):.2f}")
+                continue
+            per_stage = g / stages + 0.0
             line = f"Filter: ON {ftype} Fc {spec['fc']} Hz Gain {per_stage:.1f} dB"
             if ftype in ("PK", "LSC", "HSC", "LPQ", "HPQ"):
                 line += f" Q {float(spec.get('q', 0.7)):.2f}"

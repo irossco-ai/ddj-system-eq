@@ -151,6 +151,7 @@ Edit `config.json` (UTF-8, restart the bridge after hand edits).
 | `eq_modes.eq.kill_db` / `boost_db` | −26 / +6 | DJM-A9 EQ range (Pioneer specifies it at 20 kHz / 1 kHz / 20 Hz) |
 | `eq_modes.*.bands.*.fc` | iso 200 / 1000 / 5000 Hz · eq 120 / 1000 / 8000 Hz | Low-shelf corner / mid centre / high-shelf corner. Pioneer doesn't publish corner frequencies; these are chosen to match the specified ranges |
 | `eq_modes.*.bands.*.stages` | 3 (isolator) / 1 (eq) | Cascaded filters per band; 3 × 12 dB/oct = 36 dB/oct |
+| *(isolator kills)* | — | Any −∞-type LOW/HI band is a shelf down to −24 dB, then a 24 dB/oct high/low-pass sweeps in to the crossover as the knob reaches kill — steep edge, neighbouring band untouched. The isolator MID is four staggered bells (`centres`, `bell_scale`) forming a flat-topped 200–5000 Hz band. Both were tuned from computed frequency responses, not by ear |
 | `eq_modes.*.auto_preamp` | off | When on, the preamp drops by the largest boost so flat = bypass loudness (makes boosts feel weak). Keep Windows volume under 100 % when off |
 | `fader_min_db` | −60 | Quietest level just above the fader's bottom stop |
 | `bass_boost_db` / `bass_boost_hz` | 0 / 80 | Low-shelf bass boost (tray → *Bass boost*). **Auto-compensated**: the preamp drops by the boost amount so it cannot clip — overall level is a little lower while it's on |
