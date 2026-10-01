@@ -11,7 +11,7 @@ labels: controller
 
 **Windows output device** (Sound settings → Output):
 
-**MIDI monitor output** — run `DDJ200Bridge-cli.exe --monitor`, turn each
+**MIDI monitor output** — run `DDJBridge-cli.exe --monitor`, turn each
 EQ knob and the channel fader once, and paste the lines here:
 
 ```

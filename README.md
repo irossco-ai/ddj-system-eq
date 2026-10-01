@@ -57,14 +57,14 @@ No Python needed if you use the release executables.
 
 ## 2. Install
 
-Download `DDJ200Bridge.exe` (tray app) and `DDJ200Bridge-cli.exe` (console
+Download `DDJBridge.exe` (tray app) and `DDJBridge-cli.exe` (console
 helper) from **Releases** into a folder of your choice, e.g.
-`C:\Tools\ddj-system-eq\dist\`. *(The exe/task/folder are still named
-`DDJ200Bridge` for compatibility with the original build; they are the same
-program for every model.)*
+`C:\Tools\ddj-system-eq\dist\`. *(Upgrading from v1.6 or earlier: the program was called `DDJ200Bridge`; v1.7
+renames it to `DDJBridge` and migrates your settings automatically on first
+start. Re-run `install-autostart.ps1` so the logon task points at the new exe.)*
 
 **Equalizer APO wiring is automatic.** On first start the bridge creates
-`…\EqualizerAPO\config\ddj200.txt` and adds `Include: ddj200.txt` to
+`…\EqualizerAPO\config\ddjbridge.txt` and adds `Include: ddjbridge.txt` to
 `config.txt` (and re-checks every couple of seconds, so Peace rewriting
 `config.txt` can't break it). If you use Peace, its curve stays as the
 baseline and the DDJ EQ stacks on top.
@@ -82,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File .\setup-apo.ps1
 Close any DJ software, plug the controller in, then:
 
 ```bash
-.\dist\DDJ200Bridge-cli.exe --monitor
+.\dist\DDJBridge-cli.exe --monitor
 ```
 
 Turn the HI, MID and LOW knobs and move the fader of the mixer channel you
@@ -94,7 +94,7 @@ no editing needed. Ctrl+C to stop.
 ## 4. First run
 
 ```bash
-.\dist\DDJ200Bridge-cli.exe --console
+.\dist\DDJBridge-cli.exe --console
 ```
 
 Play something, turn the knobs. Centre detent = flat, fully left = kill,
@@ -112,7 +112,7 @@ Registers a per-user Scheduled Task (at logon, 15 s delay) and starts the
 tray app now. Quit from the tray icon. `-Remove` unregisters.
 
 Windows SmartScreen may query the unsigned exe on first run — "Run anyway",
-or build it yourself (below). Two `DDJ200Bridge.exe` entries in Task Manager
+or build it yourself (below). Two `DDJBridge.exe` entries in Task Manager
 are normal (PyInstaller launcher + app).
 
 ## Tray menu
@@ -136,7 +136,7 @@ Reset EQ to flat
 Open config folder · Open log · About · Quit
 ```
 
-Everything chosen here is saved to `%LOCALAPPDATA%\DDJ200Bridge\config.json`
+Everything chosen here is saved to `%LOCALAPPDATA%\DDJBridge\config.json`
 and applies immediately, no restart.
 
 ## Tuning
@@ -182,14 +182,14 @@ GitHub Actions and attach them to the release.
 
 ## Troubleshooting
 
-- **EQ has no effect but the file changes** (green icon, `ddj200.txt`
+- **EQ has no effect but the file changes** (green icon, `ddjbridge.txt`
   updates when you turn a knob, sound unchanged) — Equalizer APO isn't
   installed on the output device in use. Open **Equalizer APO →
   Configurator** (admin), tick the device you actually listen through, OK,
   reboot. A driver or Windows update can silently drop this registration
   even if Peace is installed.
 - **APO is ticked but still does nothing** (test: write `Preamp: -60 dB`
-  into `ddj200.txt` by hand — no change in loudness) — some drivers, the
+  into `ddjbridge.txt` by hand — no change in loudness) — some drivers, the
   Focusrite USB driver among them, ignore APO's default SFX/EFX install slots
   and only honour LFX/GFX. From an admin PowerShell:
   `.\apo-endpoint-lfx.ps1 -List` to see your devices, then
@@ -199,7 +199,7 @@ GitHub Actions and attach them to the release.
 - **It worked, then stopped after an audio-driver or Windows update** —
   the update rebuilt your output device's endpoint, and Equalizer APO's
   registration lives on the endpoint, so the new one has none. Symptom: the
-  tray is green and `ddj200.txt` changes when you move a knob, but the sound
+  tray is green and `ddjbridge.txt` changes when you move a knob, but the sound
   doesn't. Fix from an admin PowerShell: `.\apo-endpoint-lfx.ps1 -List` (the
   device shows no APO slots), then `.\apo-endpoint-lfx.ps1 -Device "<name>"`,
   pause/resume playback.
@@ -215,8 +215,8 @@ GitHub Actions and attach them to the release.
 - **Config edited but ignored** — it must be UTF-8; the log will say
   "Config unreadable" if it isn't valid JSON.
 
-Log: `%LOCALAPPDATA%\DDJ200Bridge\bridge.log`. Early-start breadcrumbs:
-`%TEMP%\DDJ200Bridge-boot.log`.
+Log: `%LOCALAPPDATA%\DDJBridge\bridge.log`. Early-start breadcrumbs:
+`%TEMP%\DDJBridge-boot.log`.
 
 ## How it works
 

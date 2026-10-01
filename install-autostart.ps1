@@ -3,7 +3,7 @@
   Start the DDJ-200 bridge automatically at logon (no admin needed).
 
   Registers a per-user Scheduled Task (trigger: at logon, 15 s delay) that
-  launches dist\DDJ200Bridge.exe if it has been built, otherwise bridge.py with
+  launches dist\DDJBridge.exe if it has been built, otherwise bridge.py with
   pythonw.exe from the .venv next to this script. A scheduled task is more
   reliable than a HKCU Run entry on Windows 11, and the delay lets USB/audio
   devices enumerate first (the bridge copes either way).
@@ -24,13 +24,19 @@ param(
 $ErrorActionPreference = "Stop"
 $here     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bridge   = Join-Path $here "bridge.py"
-$taskName = "DDJ200Bridge"
+$taskName = "DDJBridge"
 $runKey   = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
-# Legacy Run entry (v1 of this script) - always clear it.
-if (Get-ItemProperty -Path $runKey -Name $taskName -ErrorAction SilentlyContinue) {
-    Remove-ItemProperty -Path $runKey -Name $taskName
-    Write-Host "Removed legacy Run entry."
+# Legacy entries from earlier versions - always clear them.
+foreach ($old in "DDJ200Bridge", $taskName) {
+    if (Get-ItemProperty -Path $runKey -Name $old -ErrorAction SilentlyContinue) {
+        Remove-ItemProperty -Path $runKey -Name $old
+        Write-Host "Removed legacy Run entry '$old'."
+    }
+}
+if (Get-ScheduledTask -TaskName "DDJ200Bridge" -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName "DDJ200Bridge" -Confirm:$false
+    Write-Host "Removed legacy scheduled task 'DDJ200Bridge' (renamed to DDJBridge in v1.7)."
 }
 
 if ($Remove) {
@@ -43,7 +49,7 @@ if ($Remove) {
     exit 0
 }
 
-$exe = Join-Path $here "dist\DDJ200Bridge.exe"
+$exe = Join-Path $here "dist\DDJBridge.exe"
 if (Test-Path $exe) {
     $launcher   = $exe
     $launchArgs = $null
@@ -52,7 +58,7 @@ if (Test-Path $exe) {
     if (-not (Test-Path $pythonw)) {
         $cmd = Get-Command pythonw.exe -ErrorAction SilentlyContinue
         if ($null -eq $cmd) {
-            Write-Error "Neither dist\DDJ200Bridge.exe nor pythonw.exe found. Build the exe or create the venv first (see README)."
+            Write-Error "Neither dist\DDJBridge.exe nor pythonw.exe found. Build the exe or create the venv first (see README)."
         }
         $pythonw = $cmd.Source
     }
@@ -79,7 +85,7 @@ Write-Host "Scheduled task '$taskName' registered (at logon, 15 s delay):"
 if ($launchArgs) { Write-Host "  $launcher $launchArgs" } else { Write-Host "  $launcher" }
 
 if ($StartNow) {
-    if (Get-Process DDJ200Bridge -ErrorAction SilentlyContinue) {
+    if (Get-Process DDJBridge -ErrorAction SilentlyContinue) {
         Write-Host "Bridge already running."
     } else {
         Start-ScheduledTask -TaskName $taskName

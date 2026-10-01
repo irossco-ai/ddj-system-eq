@@ -2,8 +2,8 @@
 .SYNOPSIS
   Build the standalone executables with PyInstaller.
 
-  dist\DDJ200Bridge.exe       windowed (tray only, no console) - use this for autostart
-  dist\DDJ200Bridge-cli.exe   console build for --monitor / --list-ports / --flat / --console
+  dist\DDJBridge.exe       windowed (tray only, no console) - use this for autostart
+  dist\DDJBridge-cli.exe   console build for --monitor / --list-ports / --flat / --console
 
   Requires the .venv created per README (pip install -r requirements.txt pyinstaller).
 #>
@@ -22,8 +22,8 @@ if (-not $?) { & $python -m pip install pyinstaller }
 $icon   = Join-Path $here "icon.ico"
 $common = @("--onefile", "--clean", "--noconfirm", "--icon", $icon, "--distpath", "dist", "--workpath", "build", "--specpath", "build")
 
-& $python -m PyInstaller @common --windowed --name DDJ200Bridge     bridge.py
-& $python -m PyInstaller @common --console  --name DDJ200Bridge-cli bridge.py
+& $python -m PyInstaller @common --windowed --name DDJBridge     bridge.py
+& $python -m PyInstaller @common --console  --name DDJBridge-cli bridge.py
 
 Write-Host ""
 Write-Host "Built:"

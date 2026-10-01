@@ -41,9 +41,13 @@ from pathlib import Path
 import winmidi
 from winproc import running_process_names
 
-APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.6.8"
-APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
+APP_NAME = "DDJBridge"
+LEGACY_APP_NAME = "DDJ200Bridge"       # name up to v1.6.x; settings are migrated on first start
+LEGACY_INCLUDE_FILE = "ddj200.txt"
+APP_VERSION = "1.7.0"
+_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+APP_DIR = _LOCAL / APP_NAME
+LEGACY_APP_DIR = _LOCAL / LEGACY_APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
 LOG_PATH = APP_DIR / "bridge.log"
@@ -227,7 +231,7 @@ DEFAULT_CONFIG = {
         },
     },
     "apo_config_dir": r"C:\Program Files\EqualizerAPO\config",
-    "apo_include_file": "ddj200.txt",
+    "apo_include_file": "ddjbridge.txt",
     # Any of these running => the bridge yields (port released, EQ flat).
     "dj_software_process_names": [
         "rekordbox.exe", "Serato DJ Pro.exe", "Serato DJ Lite.exe",
@@ -254,7 +258,7 @@ log = logging.getLogger(APP_NAME)
 
 # Early-boot breadcrumbs: written before logging exists, so a windowed build
 # that dies or stalls during start-up still leaves evidence somewhere fixed.
-BOOT_LOG = Path(tempfile.gettempdir()) / "DDJ200Bridge-boot.log"
+BOOT_LOG = Path(tempfile.gettempdir()) / f"{APP_NAME}-boot.log"
 
 
 def _crumb(msg: str) -> None:
@@ -289,6 +293,21 @@ def _merge(base: dict, override: dict) -> dict:
     return out
 
 
+def migrate_legacy_dir() -> None:
+    """First start after the rename: carry settings over from DDJ200Bridge."""
+    if (APP_DIR / "config.json").exists() or not (LEGACY_APP_DIR / "config.json").exists():
+        return
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        for name in ("config.json", "state.json"):
+            src = LEGACY_APP_DIR / name
+            if src.exists():
+                (APP_DIR / name).write_bytes(src.read_bytes())
+        log.info("Migrated settings from %s to %s", LEGACY_APP_DIR, APP_DIR)
+    except OSError as exc:
+        log.warning("Could not migrate legacy settings: %s", exc)
+
+
 def load_config(path: Path) -> dict:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -306,6 +325,8 @@ def load_config(path: Path) -> dict:
         user["dj_software_process_names"] = user.pop("rekordbox_process_names")
     if user.get("eq_mode") == "gentle":
         user["eq_mode"] = "eq"
+    if user.get("apo_include_file") == LEGACY_INCLUDE_FILE:
+        user.pop("apo_include_file")  # v1.7 default: ddjbridge.txt
     # v1.3.2 fader-curve names.
     renames = {"gradual": "concave", "even": "linear", "fast": "early_ramp"}
     if user.get("fader_curve") in renames:
@@ -471,15 +492,26 @@ class ApoWriter:
         """Make sure APO's config.txt includes our file (Peace rewrites config.txt)."""
         config_txt = self.path.parent / "config.txt"
         line = f"Include: {self.path.name}"
+        legacy_line = f"Include: {LEGACY_INCLUDE_FILE}"
         try:
             text = config_txt.read_text(encoding="utf-8", errors="replace") if config_txt.exists() else ""
-            if any(l.strip().lower() == line.lower() for l in text.splitlines()):
+            lines = text.splitlines()
+            has_new = any(l.strip().lower() == line.lower() for l in lines)
+            has_old = self.path.name != LEGACY_INCLUDE_FILE and any(l.strip().lower() == legacy_line.lower() for l in lines)
+            if has_new and not has_old:
                 return
-            with open(config_txt, "a", encoding="utf-8") as fh:
-                if text and not text.endswith(("\n", "\r\n")):
-                    fh.write("\n")
-                fh.write(line + "\n")
-            log.info("Added '%s' to %s", line, config_txt)
+            if has_old:
+                # Rename migration: drop the old include and its file.
+                lines = [l for l in lines if l.strip().lower() != legacy_line.lower()]
+                old = self.path.parent / LEGACY_INCLUDE_FILE
+                if old.exists():
+                    old.unlink()
+                log.info("Removed legacy '%s' from %s", legacy_line, config_txt)
+            if not has_new:
+                lines.append(line)
+            config_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            if not has_new:
+                log.info("Added '%s' to %s", line, config_txt)
         except OSError as exc:
             if self.last_error != str(exc):
                 log.error("Cannot update %s: %s (run setup-apo.ps1 as admin)", config_txt, exc)
@@ -1286,6 +1318,8 @@ def main(argv=None) -> int:
     interactive = args.console or args.monitor or args.list_ports or args.flat
     setup_logging(console=interactive)
     _crumb("logging ready")
+    if args.config == CONFIG_PATH:
+        migrate_legacy_dir()
     cfg = load_config(args.config)
     _crumb("config loaded")
 
