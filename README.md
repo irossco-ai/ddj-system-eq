@@ -196,6 +196,13 @@ GitHub Actions and attach them to the release.
   `.\apo-endpoint-lfx.ps1 -Device "Speakers"` (part of the name). It backs
   up the registry keys, switches the slots, restarts Windows Audio;
   `-Revert` undoes it. Pause/resume playback afterwards.
+- **It worked, then stopped after an audio-driver or Windows update** —
+  the update rebuilt your output device's endpoint, and Equalizer APO's
+  registration lives on the endpoint, so the new one has none. Symptom: the
+  tray is green and `ddj200.txt` changes when you move a knob, but the sound
+  doesn't. Fix from an admin PowerShell: `.\apo-endpoint-lfx.ps1 -List` (the
+  device shows no APO slots), then `.\apo-endpoint-lfx.ps1 -Device "<name>"`,
+  pause/resume playback.
 - **Grey icon with the controller plugged in** — another app holds the MIDI
   port (DJ software not in the yield list, a browser tab using Web MIDI…),
   or the port name doesn't contain "DDJ" (`--list-ports`; set
