@@ -42,7 +42,7 @@ import winmidi
 from winproc import running_process_names
 
 APP_NAME = "DDJ200Bridge"
-APP_VERSION = "1.6.7"
+APP_VERSION = "1.6.8"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -761,7 +761,12 @@ class Bridge:
         self.apo.write_flat_now()
         self.apo.ensure_include()
         if self.cfg["restore_on_start"]:
-            self.apo.set_all_targets(load_state())
+            state = load_state()
+            # Never come back muted: a fader left at the bottom (or a deep
+            # dip) is not restored - the first fader touch snaps to position.
+            if state.get(FADER, 0.0) < -20.0:
+                state[FADER] = 0.0
+            self.apo.set_all_targets(state)
         self._threads = [
             threading.Thread(target=self._supervisor, name="supervisor", daemon=True),
             threading.Thread(target=self._writer, name="apo-writer", daemon=True),
